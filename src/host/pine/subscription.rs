@@ -299,7 +299,7 @@ pub fn symbol_info(symbol_key: &str) -> SymbolInfo {
     SymbolInfo {
         ticker: ticker.to_owned(),
         ticker_id: symbol_key.to_owned(),
-        currency: "USD".to_owned(),
+        currency: source.and_then(|source| source.equity_currency(ticker)).unwrap_or("USD").to_owned(),
         kind: kind.to_owned(),
         base_currency: None,
         ..SymbolInfo::default()

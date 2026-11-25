@@ -118,5 +118,14 @@ fn spark_index_metadata_is_distinct_from_equities() {
     let quotes = parse_quotes(body).unwrap();
     assert!(quotes[0].is_supported_index());
     assert!(!quotes[0].is_us_equity());
-    assert!(!quotes[1].is_supported_index());
+    assert!(quotes[1].is_supported_index());
+}
+
+#[test]
+fn xetra_quote_requires_verified_exchange_currency_and_zone() {
+    let body = r#"{"spark":{"result":[{"symbol":"SAP.DE","response":[{"meta":{"regularMarketPrice":200,"currency":"EUR","instrumentType":"EQUITY","exchangeTimezoneName":"Europe/Berlin","exchangeName":"GER"}}]},{"symbol":"SAP.DE","response":[{"meta":{"regularMarketPrice":200,"currency":"USD","instrumentType":"EQUITY","exchangeTimezoneName":"Europe/Berlin","exchangeName":"GER"}}]}]}}"#;
+    let quotes = parse_quotes(body).unwrap();
+    assert!(quotes[0].is_supported_equity());
+    assert!(!quotes[0].is_us_equity());
+    assert!(!quotes[1].is_supported_equity());
 }

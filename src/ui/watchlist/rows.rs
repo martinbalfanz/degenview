@@ -308,7 +308,12 @@ pub fn instrument_row(ui: &mut egui::Ui, item: &WatchlistInstrument, row: &RowSt
                         Color32::from_rgb(255, 159, 10).gamma_multiply(alpha),
                     )
                 } else {
-                    let price = watchlist::quote::last_text(quote, source);
+                    let mut price = watchlist::quote::last_text(quote, source);
+                    if item.instrument.source.is_yahoo_xetra(&item.instrument.symbol)
+                        && quote.is_some_and(|quote| quote.last.is_some())
+                    {
+                        price.push_str(" €");
+                    }
                     if change_under_price {
                         let price = kit::digits(
                             ui,

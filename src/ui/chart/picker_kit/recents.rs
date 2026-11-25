@@ -38,7 +38,8 @@ pub fn store_recents(store: &crate::store::Store, recents: &[RecentMarket]) {
 /// and CoinMarketCap indices are not kept; returns whether the list changed.
 pub(crate) fn record_recent(recents: &mut Vec<RecentMarket>, result: &SearchResult) -> bool {
     if result.source.is_prediction_market() || result.source == DataSource::CoinMarketCap
-        || result.source.is_yahoo_index(&result.full_symbol) {
+        || result.source.is_yahoo_index(&result.full_symbol)
+        || result.source.is_yahoo_xetra(&result.full_symbol) {
         return false;
     }
     recents.retain(|recent| {

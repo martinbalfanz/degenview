@@ -1,5 +1,5 @@
-//! Native Yahoo chart adapter. US equities and selected US indexes until the app carries
-//! per-instrument currency, asset type and exchange-session metadata.
+//! Native Yahoo chart adapter. US and Xetra market profiles are validated
+//! against vendor currency, instrument type and exchange metadata.
 
 use super::{Chart, Instrument, Interval, chart, search};
 use crate::model::market::bucket;
@@ -14,6 +14,10 @@ const MAX_BARS: usize = 10_000;
 fn is_supported(hit: &Instrument) -> bool {
     if hit.quote_type == "INDEX" {
         return DataSource::Yahoo.is_yahoo_index(&hit.symbol);
+    }
+    if DataSource::Yahoo.is_yahoo_xetra(&hit.symbol) {
+        return matches!(hit.quote_type.as_str(), "EQUITY" | "ETF")
+            && hit.exchange_code.as_deref() == Some("GER");
     }
     matches!(hit.quote_type.as_str(), "EQUITY" | "ETF")
         && matches!(
@@ -49,14 +53,15 @@ fn collect_sessions(value: &serde_json::Value, sessions: &mut Vec<(i64, i64)>) {
     }
 }
 
-/// US regular sessions occur within their UTC date. Use that date for daily
+/// The supported US and Xetra regular sessions occur within their UTC date.
+/// Use that date for daily
 /// bars, and real UTC instants for intraday bars (not today's GMT offset).
 fn native_bars(chart: Chart, timeframe: Timeframe) -> Result<Vec<Kline>, ProviderError> {
     let meta = chart.meta;
     let index = meta.is_supported_index();
-    if !index && !meta.is_us_equity() {
+    if !index && !meta.is_supported_equity() {
         return Err(ProviderError::other(
-            "Yahoo currently supports US stocks, ETFs and selected US indexes only",
+            "Yahoo currently supports US and Xetra stocks, ETFs and selected indexes only",
         ));
     }
     let mut sessions = Vec::new();
@@ -335,6 +340,18 @@ mod tests {
         let mut chart = stock(Vec::new());
         chart.meta.symbol = "^OTHER".into();
         chart.meta.instrument_type = Some("INDEX".into());
+        assert!(native_bars(chart, Timeframe::DAY_1).is_err());
+    }
+
+    #[test]
+    fn xetra_equity_requires_matching_market_metadata() {
+        let mut chart = stock(vec![bar(86_400 + 7 * 3_600, 100.0, Some(10.0))]);
+        chart.meta.symbol = "SAP.DE".into();
+        chart.meta.currency = Some("EUR".into());
+        chart.meta.exchange_timezone_name = Some("Europe/Berlin".into());
+        chart.meta.exchange_name = Some("GER".into());
+        assert_eq!(native_bars(chart.clone(), Timeframe::DAY_1).unwrap()[0].open_time, 86_400_000);
+        chart.meta.exchange_name = Some("FRA".into());
         assert!(native_bars(chart, Timeframe::DAY_1).is_err());
     }
 

@@ -359,9 +359,9 @@ fn yahoo(requests: &[QuoteRequest]) -> Result<HashMap<String, SourceQuote>, Quot
         .filter_map(|request| {
             let quote = quotes.iter().find(|quote| {
                 quote.symbol.eq_ignore_ascii_case(&request.symbol)
-                    && (quote.is_us_equity() || quote.is_supported_index())
+                    && (quote.is_supported_equity() || quote.is_supported_index())
             })?;
-            let volume = if quote.is_us_equity() { quote.regular_market_volume } else { None };
+            let volume = if quote.is_supported_equity() { quote.regular_market_volume } else { None };
             Some((
                 request.symbol.clone(),
                 SourceQuote {

@@ -88,6 +88,7 @@ fn market(ui: &mut Ui, area: Rect, result: &SearchResult, detail: &Detail) -> Op
         pos2(inner.left(), y),
         inner.width(),
         result.source,
+        &result.full_symbol,
         detail.quote,
     ) + 12.0;
 
@@ -387,6 +388,7 @@ fn price_line(
     at: Pos2,
     width: f32,
     source: DataSource,
+    symbol: &str,
     quote: Option<&WatchlistQuote>,
 ) -> f32 {
     let Some(last) = quote.and_then(|quote| quote.last) else {
@@ -402,9 +404,13 @@ fn price_line(
         ui.painter().galley(at, galley, theme::text_secondary());
         return height.max(40.0);
     };
+    let mut price_text = amount(source, last);
+    if source.is_yahoo_xetra(symbol) {
+        price_text.push_str(" EUR");
+    }
     let price = kit::digits(
         ui,
-        &amount(source, last),
+        &price_text,
         34.0,
         SEMIBOLD,
         theme::text_primary(),
@@ -479,11 +485,14 @@ fn venue_line(ui: &Ui, at: Pos2, result: &SearchResult) -> f32 {
             kind => kind,
         }
     };
-    let text = tr!(
+    let mut text = tr!(
         "{venue} · {kind}",
         venue = result.source.display_name(),
         kind = kind
     );
+    if result.source.is_yahoo_xetra(&result.full_symbol) {
+        text.push_str(" · Xetra");
+    }
     let galley = kit::galley(
         ui,
         &text,

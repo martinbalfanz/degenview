@@ -309,9 +309,10 @@ fn instrument_from(token: &str) -> Result<WatchlistInstrument, String> {
         DataSource::Yahoo => {
             let symbol = rest.to_uppercase();
             if !source.is_yahoo_index(&symbol)
+                && !source.is_yahoo_xetra(&symbol)
                 && !symbol.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
             {
-                return Err("Not a supported Yahoo US stock or index ticker".to_owned());
+                return Err("Not a supported Yahoo stock or index ticker".to_owned());
             }
             Ok(item(source, &symbol, &symbol, &symbol))
         }

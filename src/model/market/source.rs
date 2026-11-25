@@ -114,20 +114,42 @@ impl DataSource {
         matches!(self, Self::Polymarket | Self::Kalshi)
     }
 
-    /// Providers whose charts currently use US equity conventions.
+    /// Providers listed in the stock/index picker (not a session or currency test).
     pub fn is_us_equity_source(self) -> bool {
         matches!(self, Self::Alpaca | Self::Yahoo)
     }
 
-    /// US index tickers supported by Yahoo. The allowlist keeps the existing
-    /// USD and US-session conventions honest until instrument metadata is
-    /// available throughout the application.
+    /// Index tickers supported by Yahoo; validated against vendor metadata.
     pub fn is_yahoo_index(self, symbol: &str) -> bool {
         self == Self::Yahoo
             && matches!(
                 symbol.trim().to_ascii_uppercase().as_str(),
-                "^GSPC" | "^IXIC" | "^NDX" | "^DJI" | "^RUT" | "^VIX"
+                "^GSPC" | "^IXIC" | "^NDX" | "^DJI" | "^RUT" | "^VIX" | "^GDAXI"
             )
+    }
+
+    /// Yahoo's explicit Xetra symbol family. The transport must also verify
+    /// EUR, exchange code and timezone before accepting any equity data.
+    pub fn is_yahoo_xetra(self, symbol: &str) -> bool {
+        if self != Self::Yahoo {
+            return false;
+        }
+        let symbol = symbol.trim().to_ascii_uppercase();
+        symbol == "^GDAXI" || symbol.strip_suffix(".DE").is_some_and(|root| {
+            !root.is_empty() && root.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+    }
+
+    /// Quote currency of the supported equity market profile, not a currency
+    /// inferred for arbitrary Yahoo listings. None for unrelated providers.
+    pub fn equity_currency(self, symbol: &str) -> Option<&'static str> {
+        if self.is_yahoo_xetra(symbol) {
+            Some("EUR")
+        } else if self.is_us_equity_source() {
+            Some("USD")
+        } else {
+            None
+        }
     }
 
     /// Index levels are not traded shares. Do not present index feed volume

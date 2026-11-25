@@ -39,7 +39,7 @@ pub(super) fn symbol_info(symbol: &str, source: DataSource, chart_type: ChartTyp
     SymbolInfo {
         ticker: symbol.to_owned(),
         ticker_id: format!("{}:{}", source.watchlist_slug(), symbol),
-        currency: "USD".to_owned(),
+        currency: source.equity_currency(symbol).unwrap_or("USD").to_owned(),
         kind: if source.is_yahoo_index(symbol) {
             "index"
         } else if source.is_us_equity_source() {
@@ -656,6 +656,7 @@ mod tests {
 
     #[test]
     fn stock_and_index_symbol_types_are_distinct() {
+        assert_eq!(symbol_info("SAP.DE", DataSource::Yahoo, ChartType::Candles).currency, "EUR");
         assert_eq!(symbol_info("^IXIC", DataSource::Yahoo, ChartType::Candles).kind, "index");
         assert_eq!(symbol_info("AAPL", DataSource::Yahoo, ChartType::Candles).kind, "stock");
         assert_eq!(

@@ -82,14 +82,32 @@ pub struct ChartMeta {
 
 fn is_supported_index(symbol: &str, currency: Option<&str>, timezone: Option<&str>, kind: Option<&str>) -> bool {
     DataSource::Yahoo.is_yahoo_index(symbol)
-        && currency == Some("USD")
-        && matches!(timezone, Some("America/New_York" | "America/Chicago"))
         && kind == Some("INDEX")
+        && if DataSource::Yahoo.is_yahoo_xetra(symbol) {
+            currency == Some("EUR") && timezone == Some("Europe/Berlin")
+        } else {
+            currency == Some("USD")
+                && matches!(timezone, Some("America/New_York" | "America/Chicago"))
+        }
+}
+
+fn is_xetra_equity(symbol: &str, currency: Option<&str>, timezone: Option<&str>, exchange: Option<&str>, kind: Option<&str>) -> bool {
+    DataSource::Yahoo.is_yahoo_xetra(symbol)
+        && !DataSource::Yahoo.is_yahoo_index(symbol)
+        && currency == Some("EUR")
+        && timezone == Some("Europe/Berlin")
+        && exchange == Some("GER")
+        && matches!(kind, Some("EQUITY" | "ETF"))
 }
 
 impl ChartMeta {
+    fn is_supported_equity(&self) -> bool {
+        self.is_us_equity() || is_xetra_equity(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.exchange_name.as_deref(), self.instrument_type.as_deref())
+    }
+
     fn is_us_equity(&self) -> bool {
-        self.currency.as_deref() == Some("USD")
+        !DataSource::Yahoo.is_yahoo_xetra(&self.symbol)
+            && self.currency.as_deref() == Some("USD")
             && self.exchange_timezone_name.as_deref() == Some("America/New_York")
             && matches!(self.instrument_type.as_deref(), Some("EQUITY" | "ETF"))
     }
@@ -135,15 +153,21 @@ pub struct Quote {
     pub currency: Option<String>,
     pub instrument_type: Option<String>,
     pub exchange_timezone_name: Option<String>,
+    pub exchange_name: Option<String>,
 }
 
 impl Quote {
+    pub fn is_supported_equity(&self) -> bool {
+        self.is_us_equity() || is_xetra_equity(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.exchange_name.as_deref(), self.instrument_type.as_deref())
+    }
+
     pub fn is_supported_index(&self) -> bool {
         is_supported_index(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.instrument_type.as_deref())
     }
 
     pub fn is_us_equity(&self) -> bool {
-        self.currency.as_deref() == Some("USD")
+        !DataSource::Yahoo.is_yahoo_xetra(&self.symbol)
+            && self.currency.as_deref() == Some("USD")
             && self.exchange_timezone_name.as_deref() == Some("America/New_York")
             && matches!(self.instrument_type.as_deref(), Some("EQUITY" | "ETF"))
     }
@@ -462,6 +486,7 @@ struct SparkMeta {
     currency: Option<String>,
     instrument_type: Option<String>,
     exchange_timezone_name: Option<String>,
+    exchange_name: Option<String>,
 }
 
 /// One spark batch, matching Wickline's keyless quote method. The caller
@@ -512,6 +537,7 @@ fn parse_quotes(body: &str) -> Result<Vec<Quote>, ProviderError> {
                 currency: meta.currency,
                 instrument_type: meta.instrument_type,
                 exchange_timezone_name: meta.exchange_timezone_name,
+                exchange_name: meta.exchange_name,
             })
         })
         .collect())

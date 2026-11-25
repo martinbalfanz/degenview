@@ -965,7 +965,7 @@ impl ChartWorkspace {
             return;
         };
         let title = format!("{} {}", self.charts[index].symbol, self.timeframe.label());
-        let hours = session_stats::MarketHours::for_source(self.charts[index].source);
+        let hours = session_stats::MarketHours::for_market(self.charts[index].source, &self.charts[index].symbol);
         let bar_ms = self.timeframe.nominal_ms();
         // The chart data borrows the workspace, so the panel's state is lent out for the frame.
         let mut state = std::mem::take(&mut self.context.stats);

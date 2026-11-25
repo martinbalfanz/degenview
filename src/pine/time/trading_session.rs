@@ -108,6 +108,27 @@ pub struct MarketSessions {
 }
 
 impl MarketSessions {
+    /// Session selection for a source-qualified symbol. This keeps Pine's
+    /// public syminfo.type ("stock" or "index") distinct from its market hours.
+    pub fn for_symbol(kind: &str, ticker_id: &str) -> Self {
+        if let Some((prefix, symbol)) = ticker_id.split_once(':')
+            && crate::model::DataSource::from_watchlist_slug(prefix)
+                .is_some_and(|source| source.is_yahoo_xetra(symbol))
+        {
+            return Self::xetra();
+        }
+        Self::for_kind(kind)
+    }
+
+    pub fn xetra() -> Self {
+        Self {
+            zone: "Europe/Berlin",
+            regular: TradingSession::parse("0900-1730:23456").expect("a constant session parses"),
+            premarket: None,
+            postmarket: None,
+        }
+    }
+
     /// The sessions of a `syminfo.type`: `"stock"` is a US stock, anything else is taken to trade
     /// all day on UTC like the crypto the app mostly lists.
     pub fn for_kind(kind: &str) -> Self {
@@ -355,5 +376,23 @@ mod tests {
         );
         assert!(!crypto.ends_regular_session(midnight, HOUR));
         assert_eq!(MarketSessions::for_kind("anything else"), crypto);
+    }
+}
+
+#[cfg(test)]
+mod yahoo_xetra_tests {
+    use super::*;
+
+    #[test]
+    fn xetra_core_hours_follow_berlin_daylight_saving() {
+        let market = MarketSessions::for_symbol("stock", "YAHOO:SAP.DE");
+        assert_eq!(market.zone(), "Europe/Berlin");
+        let winter = crate::pine::time::calendar::make(2026, 1, 12, 8, 0, 0, 0).unwrap();
+        let summer = crate::pine::time::calendar::make(2026, 7, 13, 7, 0, 0, 0).unwrap();
+        for open in [winter, summer] {
+            assert!(market.is_regular(open));
+            assert!(!market.is_regular(open - 60_000));
+            assert!(!market.is_regular(open + 510 * 60_000));
+        }
     }
 }
