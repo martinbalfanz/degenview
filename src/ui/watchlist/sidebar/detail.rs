@@ -217,8 +217,10 @@ pub(super) fn detail_panel(
         Direction::Flat => theme::text_secondary(),
     };
     let mut last = watchlist::quote::last_text(quote, Some(source));
-    if source.is_yahoo_xetra(&item.instrument.symbol) && quote.is_some_and(|quote| quote.last.is_some()) {
-        last.push_str(" EUR");
+    if let Some(market) = source.yahoo_market(&item.instrument.symbol)
+        && quote.is_some_and(|quote| quote.last.is_some())
+    {
+        last.push_str(&format!(" {}", market.currency()));
     }
     let percent = watchlist::quote::percent_text(quote, Some(source));
     let pill_text = if direction == Direction::Flat {

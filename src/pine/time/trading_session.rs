@@ -112,18 +112,18 @@ impl MarketSessions {
     /// public syminfo.type ("stock" or "index") distinct from its market hours.
     pub fn for_symbol(kind: &str, ticker_id: &str) -> Self {
         if let Some((prefix, symbol)) = ticker_id.split_once(':')
-            && crate::model::DataSource::from_watchlist_slug(prefix)
-                .is_some_and(|source| source.is_yahoo_xetra(symbol))
+            && let Some(market) = crate::model::DataSource::from_watchlist_slug(prefix)
+                .and_then(|source| source.yahoo_market(symbol))
         {
-            return Self::xetra();
+            return Self::international(market);
         }
         Self::for_kind(kind)
     }
 
-    pub fn xetra() -> Self {
+    pub fn international(market: crate::model::YahooMarket) -> Self {
         Self {
-            zone: "Europe/Berlin",
-            regular: TradingSession::parse("0900-1730:23456").expect("a constant session parses"),
+            zone: market.timezone(),
+            regular: TradingSession::parse(market.regular_session()).expect("a constant session parses"),
             premarket: None,
             postmarket: None,
         }
@@ -393,6 +393,28 @@ mod yahoo_xetra_tests {
             assert!(market.is_regular(open));
             assert!(!market.is_regular(open - 60_000));
             assert!(!market.is_regular(open + 510 * 60_000));
+        }
+    }
+}
+
+#[cfg(test)]
+mod yahoo_international_tests {
+    use super::*;
+
+    #[test]
+    fn london_and_toronto_use_their_own_local_open() {
+        for (symbol, zone, winter_hour, winter_minute, summer_hour) in [
+            ("YAHOO:SHEL.L", "Europe/London", 8, 0, 7),
+            ("YAHOO:RY.TO", "America/Toronto", 14, 30, 13),
+        ] {
+            let market = MarketSessions::for_symbol("stock", symbol);
+            assert_eq!(market.zone(), zone);
+            let winter = crate::pine::time::calendar::make(2026, 1, 12, winter_hour, winter_minute, 0, 0).unwrap();
+            let summer = crate::pine::time::calendar::make(2026, 7, 13, summer_hour, winter_minute, 0, 0).unwrap();
+            for open in [winter, summer] {
+                assert!(market.is_regular(open));
+                assert!(!market.is_regular(open - 60_000));
+            }
         }
     }
 }

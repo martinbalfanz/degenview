@@ -315,7 +315,7 @@ fn footer(ui: &mut Ui, stats: &Stats, setting: &Setting) {
     }
     lines.push(match stats.hours {
         MarketHours::UsStock => tr!("A day is the regular session in New York.").to_owned(),
-        MarketHours::Xetra => tr!("A day is the Xetra core session in Berlin.").to_owned(),
+        MarketHours::International(market) => tr!("A day is the core session on {exchange}.", exchange = market.name()).to_owned(),
         MarketHours::Continuous => {
             tr!("A day is a UTC date: this market trades round the clock.").to_owned()
         }

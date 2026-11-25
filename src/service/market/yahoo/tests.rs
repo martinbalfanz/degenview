@@ -129,3 +129,14 @@ fn xetra_quote_requires_verified_exchange_currency_and_zone() {
     assert!(!quotes[0].is_us_equity());
     assert!(!quotes[1].is_supported_equity());
 }
+
+#[test]
+fn london_spark_prices_and_previous_close_share_a_scale() {
+    let body = r#"{"spark":{"result":[{"symbol":"SHEL.L","response":[{"meta":{"regularMarketPrice":2500,"previousClose":2400,"regularMarketVolume":100,"currency":"GBp","instrumentType":"EQUITY","exchangeTimezoneName":"Europe/London","exchangeName":"LSE"}}]},{"symbol":"SHEL.L","response":[{"meta":{"regularMarketPrice":25,"currency":"USD","instrumentType":"EQUITY","exchangeTimezoneName":"Europe/London","exchangeName":"LSE"}}]}]}}"#;
+    let quotes = parse_quotes(body).unwrap();
+    let scale = quotes[0].equity_price_scale().unwrap();
+    assert_eq!(quotes[0].price * scale, 25.0);
+    assert_eq!(quotes[0].previous_close.unwrap() * scale, 24.0);
+    assert_eq!(quotes[0].regular_market_volume, Some(100.0));
+    assert_eq!(quotes[1].equity_price_scale(), None);
+}

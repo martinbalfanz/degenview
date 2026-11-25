@@ -409,8 +409,8 @@ impl ChartCard {
                 ),
                 None => data.source.display_name().to_owned(),
             };
-            if data.source.is_yahoo_xetra(data.symbol) {
-                subtitle.push_str(" · Xetra · EUR");
+            if let Some(market) = data.source.yahoo_market(data.symbol) {
+                subtitle.push_str(&format!(" · {} · {}", market.name(), market.currency()));
             }
             if decor.replay_active {
                 subtitle = tr!("{subtitle} · Replay", subtitle = subtitle);

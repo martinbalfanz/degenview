@@ -361,8 +361,8 @@ pub enum MarketHours {
     Continuous,
     /// A US stock: the regular session in New York.
     UsStock,
-    /// Xetra's core session in Berlin (not extended retail hours).
-    Xetra,
+    /// Exchange-local core session, without extended or special hours.
+    International(crate::model::YahooMarket),
 }
 
 impl MarketHours {
@@ -374,8 +374,8 @@ impl MarketHours {
     }
 
     pub fn for_market(source: super::DataSource, symbol: &str) -> Self {
-        if source.is_yahoo_xetra(symbol) {
-            Self::Xetra
+        if let Some(market) = source.yahoo_market(symbol) {
+            Self::International(market)
         } else {
             Self::for_source(source)
         }
@@ -387,7 +387,7 @@ impl MarketHours {
         match self {
             Self::Continuous => "UTC days",
             Self::UsStock => "US regular hours",
-            Self::Xetra => "Xetra core hours",
+            Self::International(market) => market.name(),
         }
     }
 
@@ -396,7 +396,7 @@ impl MarketHours {
         match self {
             Self::Continuous => tr!("UTC days"),
             Self::UsStock => tr!("US regular hours"),
-            Self::Xetra => tr!("Xetra core hours"),
+            Self::International(market) => market.name(),
         }
     }
 }
@@ -593,7 +593,7 @@ fn usable(bar: &Kline) -> bool {
 /// Groups the usable bars into sessions. `bars` is oldest first, as the chart holds it.
 fn sessions(bars: &[Kline], bar_ms: i64, hours: MarketHours, intraday: bool) -> Vec<Day> {
     let market = match hours {
-        MarketHours::Xetra => MarketSessions::xetra(),
+        MarketHours::International(market) => MarketSessions::international(market),
         _ => MarketSessions::for_kind("stock"),
     };
     let mut days: Vec<Day> = Vec::new();

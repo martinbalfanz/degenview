@@ -80,40 +80,39 @@ pub struct ChartMeta {
     pub current_trading_period: Option<serde_json::Value>,
 }
 
-fn is_supported_index(symbol: &str, currency: Option<&str>, timezone: Option<&str>, kind: Option<&str>) -> bool {
-    DataSource::Yahoo.is_yahoo_index(symbol)
-        && kind == Some("INDEX")
-        && if DataSource::Yahoo.is_yahoo_xetra(symbol) {
-            currency == Some("EUR") && timezone == Some("Europe/Berlin")
-        } else {
-            currency == Some("USD")
-                && matches!(timezone, Some("America/New_York" | "America/Chicago"))
+fn index_price_scale(symbol: &str, currency: Option<&str>, timezone: Option<&str>, kind: Option<&str>) -> Option<f64> {
+    if !DataSource::Yahoo.is_yahoo_index(symbol) || kind != Some("INDEX") {
+        return None;
+    }
+    if let Some(market) = DataSource::Yahoo.yahoo_market(symbol) {
+        if timezone != Some(market.timezone()) {
+            return None;
         }
+        return market.price_scale(currency?);
+    }
+    (currency == Some("USD") && matches!(timezone, Some("America/New_York" | "America/Chicago"))).then_some(1.0)
 }
 
-fn is_xetra_equity(symbol: &str, currency: Option<&str>, timezone: Option<&str>, exchange: Option<&str>, kind: Option<&str>) -> bool {
-    DataSource::Yahoo.is_yahoo_xetra(symbol)
-        && !DataSource::Yahoo.is_yahoo_index(symbol)
-        && currency == Some("EUR")
-        && timezone == Some("Europe/Berlin")
-        && exchange == Some("GER")
-        && matches!(kind, Some("EQUITY" | "ETF"))
+fn equity_price_scale(symbol: &str, currency: Option<&str>, timezone: Option<&str>, exchange: Option<&str>, kind: Option<&str>) -> Option<f64> {
+    if !matches!(kind, Some("EQUITY" | "ETF")) || DataSource::Yahoo.is_yahoo_index(symbol) {
+        return None;
+    }
+    if let Some(market) = DataSource::Yahoo.yahoo_market(symbol) {
+        if timezone != Some(market.timezone()) || exchange != Some(market.exchange()) {
+            return None;
+        }
+        return market.price_scale(currency?);
+    }
+    (currency == Some("USD") && timezone == Some("America/New_York")).then_some(1.0)
 }
 
 impl ChartMeta {
-    fn is_supported_equity(&self) -> bool {
-        self.is_us_equity() || is_xetra_equity(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.exchange_name.as_deref(), self.instrument_type.as_deref())
+    fn equity_price_scale(&self) -> Option<f64> {
+        equity_price_scale(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.exchange_name.as_deref(), self.instrument_type.as_deref())
     }
 
-    fn is_us_equity(&self) -> bool {
-        !DataSource::Yahoo.is_yahoo_xetra(&self.symbol)
-            && self.currency.as_deref() == Some("USD")
-            && self.exchange_timezone_name.as_deref() == Some("America/New_York")
-            && matches!(self.instrument_type.as_deref(), Some("EQUITY" | "ETF"))
-    }
-
-    fn is_supported_index(&self) -> bool {
-        is_supported_index(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.instrument_type.as_deref())
+    fn index_price_scale(&self) -> Option<f64> {
+        index_price_scale(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.instrument_type.as_deref())
     }
 }
 
@@ -157,19 +156,27 @@ pub struct Quote {
 }
 
 impl Quote {
-    pub fn is_supported_equity(&self) -> bool {
-        self.is_us_equity() || is_xetra_equity(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.exchange_name.as_deref(), self.instrument_type.as_deref())
+    pub fn equity_price_scale(&self) -> Option<f64> {
+        equity_price_scale(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.exchange_name.as_deref(), self.instrument_type.as_deref())
     }
 
-    pub fn is_supported_index(&self) -> bool {
-        is_supported_index(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.instrument_type.as_deref())
+    pub fn index_price_scale(&self) -> Option<f64> {
+        index_price_scale(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.instrument_type.as_deref())
     }
 
-    pub fn is_us_equity(&self) -> bool {
-        !DataSource::Yahoo.is_yahoo_xetra(&self.symbol)
-            && self.currency.as_deref() == Some("USD")
-            && self.exchange_timezone_name.as_deref() == Some("America/New_York")
-            && matches!(self.instrument_type.as_deref(), Some("EQUITY" | "ETF"))
+    #[cfg(test)]
+    fn is_supported_equity(&self) -> bool {
+        self.equity_price_scale().is_some()
+    }
+
+    #[cfg(test)]
+    fn is_supported_index(&self) -> bool {
+        self.index_price_scale().is_some()
+    }
+
+    #[cfg(test)]
+    fn is_us_equity(&self) -> bool {
+        DataSource::Yahoo.yahoo_market(&self.symbol).is_none() && self.is_supported_equity()
     }
 }
 

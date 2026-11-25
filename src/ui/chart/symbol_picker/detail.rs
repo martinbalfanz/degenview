@@ -405,8 +405,8 @@ fn price_line(
         return height.max(40.0);
     };
     let mut price_text = amount(source, last);
-    if source.is_yahoo_xetra(symbol) {
-        price_text.push_str(" EUR");
+    if let Some(market) = source.yahoo_market(symbol) {
+        price_text.push_str(&format!(" {}", market.currency()));
     }
     let price = kit::digits(
         ui,
@@ -490,8 +490,8 @@ fn venue_line(ui: &Ui, at: Pos2, result: &SearchResult) -> f32 {
         venue = result.source.display_name(),
         kind = kind
     );
-    if result.source.is_yahoo_xetra(&result.full_symbol) {
-        text.push_str(" · Xetra");
+    if let Some(market) = result.source.yahoo_market(&result.full_symbol) {
+        text.push_str(&format!(" · {}", market.name()));
     }
     let galley = kit::galley(
         ui,

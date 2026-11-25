@@ -1,4 +1,4 @@
-//! Native Yahoo chart adapter. US and Xetra market profiles are validated
+//! Native Yahoo chart adapter. Supported market profiles are validated
 //! against vendor currency, instrument type and exchange metadata.
 
 use super::{Chart, Instrument, Interval, chart, search};
@@ -15,9 +15,9 @@ fn is_supported(hit: &Instrument) -> bool {
     if hit.quote_type == "INDEX" {
         return DataSource::Yahoo.is_yahoo_index(&hit.symbol);
     }
-    if DataSource::Yahoo.is_yahoo_xetra(&hit.symbol) {
+    if let Some(market) = DataSource::Yahoo.yahoo_market(&hit.symbol) {
         return matches!(hit.quote_type.as_str(), "EQUITY" | "ETF")
-            && hit.exchange_code.as_deref() == Some("GER");
+            && hit.exchange_code.as_deref() == Some(market.exchange());
     }
     matches!(hit.quote_type.as_str(), "EQUITY" | "ETF")
         && matches!(
@@ -53,17 +53,16 @@ fn collect_sessions(value: &serde_json::Value, sessions: &mut Vec<(i64, i64)>) {
     }
 }
 
-/// The supported US and Xetra regular sessions occur within their UTC date.
+/// The supported regular sessions occur within their UTC date.
 /// Use that date for daily
 /// bars, and real UTC instants for intraday bars (not today's GMT offset).
 fn native_bars(chart: Chart, timeframe: Timeframe) -> Result<Vec<Kline>, ProviderError> {
     let meta = chart.meta;
-    let index = meta.is_supported_index();
-    if !index && !meta.is_supported_equity() {
-        return Err(ProviderError::other(
-            "Yahoo currently supports US and Xetra stocks, ETFs and selected indexes only",
-        ));
-    }
+    let index_scale = meta.index_price_scale();
+    let index = index_scale.is_some();
+    let scale = index_scale.or_else(|| meta.equity_price_scale()).ok_or_else(|| {
+        ProviderError::other("Yahoo returned an unsupported market or quote currency")
+    })?;
     let mut sessions = Vec::new();
     if let Some(periods) = &meta.trading_periods {
         collect_sessions(periods.get("regular").unwrap_or(periods), &mut sessions);
@@ -73,7 +72,11 @@ fn native_bars(chart: Chart, timeframe: Timeframe) -> Result<Vec<Kline>, Provide
     }
 
     let mut out: Vec<Kline> = Vec::new();
-    for bar in chart.bars {
+    for mut bar in chart.bars {
+        bar.open *= scale;
+        bar.high *= scale;
+        bar.low *= scale;
+        bar.close *= scale;
         // Index levels are not traded shares. Kline currently has no
         // optional volume: use its zero placeholder only for indexes, and
         // hide volume for those symbols at presentation boundaries.
@@ -352,6 +355,20 @@ mod tests {
         chart.meta.exchange_name = Some("GER".into());
         assert_eq!(native_bars(chart.clone(), Timeframe::DAY_1).unwrap()[0].open_time, 86_400_000);
         chart.meta.exchange_name = Some("FRA".into());
+        assert!(native_bars(chart, Timeframe::DAY_1).is_err());
+    }
+
+    #[test]
+    fn london_pence_candles_are_normalized_without_scaling_volume() {
+        let mut chart = stock(vec![bar(86_400 + 8 * 3_600, 2500.0, Some(500.0))]);
+        chart.meta.symbol = "SHEL.L".into();
+        chart.meta.currency = Some("GBp".into());
+        chart.meta.exchange_timezone_name = Some("Europe/London".into());
+        chart.meta.exchange_name = Some("LSE".into());
+        let bars = native_bars(chart.clone(), Timeframe::DAY_1).unwrap();
+        assert_eq!(bars[0].close, 25.0);
+        assert_eq!(bars[0].volume, 500.0);
+        chart.meta.currency = Some("USD".into());
         assert!(native_bars(chart, Timeframe::DAY_1).is_err());
     }
 
