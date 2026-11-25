@@ -604,8 +604,8 @@ mod tests {
             requested: 10,
             candles: series(0..10),
         };
-        assert_eq!(fresh_entry(&entry, 2, LONG).unwrap(), series(8..10));
-        assert!(fresh_entry(&entry, 11, LONG).is_none());
+        assert_eq!(fresh_entry(&entry, 2, LONG.fresh).unwrap(), series(8..10));
+        assert!(fresh_entry(&entry, 11, LONG.fresh).is_none());
         assert!(fresh_entry(&entry, 2, Duration::ZERO).is_none());
     }
 
