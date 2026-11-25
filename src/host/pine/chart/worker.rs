@@ -1,7 +1,8 @@
 //! One applied script's background runner: a persistent `ExecutionController` fed the chart's
 //! bars on the work queue, latest request first.
 
-use super::super::KlineSecurityDataProvider;
+use super::super::SessionSecurityDataProvider;
+use crate::model::market::yahoo_session::PolicySnapshot;
 use crate::model::Kline;
 use crate::pine::compiler::program::{ChartTheme, InputValue, SymbolInfo, VisualOutput};
 use crate::pine::logs::LogBatch;
@@ -44,6 +45,7 @@ pub(super) struct WorkerConfig {
     pub(super) bar_seconds: Option<f64>,
     /// The length of the timeframe the chart is set to.
     pub(super) timeframe_seconds: Option<f64>,
+    pub(super) session_policy: PolicySnapshot,
 }
 
 enum WorkerEngine {
@@ -134,7 +136,7 @@ impl PineWorker {
                         request.visible_range,
                         Limits::default(),
                         &LibraryRegistry,
-                        Some(Box::new(KlineSecurityDataProvider)),
+                        Some(Box::new(SessionSecurityDataProvider::new(config.session_policy))),
                         Some(Arc::clone(&cancellation)),
                     ) {
                         Ok(controller) => {

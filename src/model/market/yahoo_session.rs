@@ -17,7 +17,7 @@ pub const SETTINGS_KEY: &str = "market.yahoo.extended_hours";
 // observes both fields, so a worker cannot capture a torn session policy.
 static POLICY: OnceLock<AtomicU64> = OnceLock::new();
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub(crate) struct PolicySnapshot {
     pub(crate) extended: bool,
     pub(crate) revision: u64,
@@ -53,21 +53,17 @@ pub(crate) fn snapshot() -> PolicySnapshot {
 // work. The settings path must not publish a live policy change yet.
 #[cfg(test)]
 fn transition(state: &AtomicU64, extended: bool) -> PolicySnapshot {
-    let value = state
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| {
-            let current = PolicySnapshot::decode(old);
-            if current.extended == extended {
-                None
-            } else {
-                Some((old & !1).wrapping_add(2) | u64::from(extended))
-            }
-        })
-        .unwrap_or_else(|unchanged| unchanged);
-    let current = PolicySnapshot::decode(value);
-    if current.extended == extended {
-        current
-    } else {
-        PolicySnapshot::decode((value & !1).wrapping_add(2) | u64::from(extended))
+    let mut old = state.load(Ordering::Acquire);
+    loop {
+        let current = PolicySnapshot::decode(old);
+        if current.extended == extended {
+            return current;
+        }
+        let next = (old & !1).wrapping_add(2) | u64::from(extended);
+        match state.compare_exchange_weak(old, next, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return PolicySnapshot::decode(next),
+            Err(actual) => old = actual,
+        }
     }
 }
 

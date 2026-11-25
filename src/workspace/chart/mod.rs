@@ -345,6 +345,11 @@ impl Chart {
         }
     }
 
+    /// Background consumers must not read history from a missed session change.
+    pub(super) fn yahoo_session_is_current(&self, timeframe: Timeframe) -> bool {
+        self.yahoo_policy == market::yahoo_session::snapshot().effective(self.source, &self.symbol, timeframe)
+    }
+
     /// Drop data and answers belonging to the previous effective session mode. The
     /// viewport, drawings, scripts and comparison configuration belong to the chart,
     /// not the history, and are preserved.

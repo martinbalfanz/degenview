@@ -12,6 +12,7 @@ use crate::clock::now_ms;
 use crate::lock::lock;
 use crate::model::chart::synthetic::ticker;
 use crate::model::market::bucket::{self, FoldPlan};
+use crate::model::market::yahoo_session::{self, PolicySnapshot};
 use crate::model::{DataSource, Kline, Timeframe};
 use crate::pine::compiler;
 use crate::pine::compiler::program::{InputValue, SymbolInfo, VisualOutput};
@@ -33,24 +34,33 @@ use std::time::Duration;
 /// the session caches for the rest of the run.
 pub struct KlineSecurityDataProvider;
 
+/// One controller or historical run sees one immutable session policy.
+pub(super) struct SessionSecurityDataProvider(PolicySnapshot);
+
+impl SessionSecurityDataProvider {
+    pub(super) fn new(policy: PolicySnapshot) -> Self {
+        Self(policy)
+    }
+}
+
 /// ~30 s TTL so repeated runs do not re-fetch a foreign symbol each bar.
 const SECURITY_CACHE_TTL_MS: i64 = 30_000;
 /// How long an intrabar fetch waits before asking again after a failure that may pass (a busy
 /// provider, a dropped connection); the script waits for it, so the wait is short.
 const INTRABAR_RETRY_DELAYS: [Duration; 2] =
     [Duration::from_millis(500), Duration::from_millis(1_500)];
-type SecurityCacheKey = (SecurityKey, Option<ChartSpan>, bool);
+type SecurityCacheKey = (SecurityKey, Option<ChartSpan>, PolicySnapshot);
 type SecurityCache = HashMap<SecurityCacheKey, (Vec<Kline>, i64)>;
 static SECURITY_CACHE: LazyLock<Mutex<SecurityCache>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 impl KlineSecurityDataProvider {
-    fn extended(key: &SecurityKey) -> bool {
+    fn effective_policy(key: &SecurityKey, policy: PolicySnapshot) -> PolicySnapshot {
         let (plain, _) = ticker::split(&key.symbol);
         resolve_symbol(plain)
             .zip(timeframe_of(key.interval))
-            .is_some_and(|((source, symbol), timeframe)| {
-                crate::model::market::yahoo_session::extended_candles(source, &symbol, timeframe)
+            .map_or_else(PolicySnapshot::default, |((source, symbol), timeframe)| {
+                policy.effective(source, &symbol, timeframe)
             })
     }
 
@@ -61,7 +71,10 @@ impl KlineSecurityDataProvider {
     }
 
     fn remember(key: SecurityCacheKey, candles: &[Kline]) {
-        lock(&SECURITY_CACHE).insert(key, (candles.to_vec(), now_ms()));
+        let now = now_ms();
+        let mut cache = lock(&SECURITY_CACHE);
+        cache.retain(|_, (_, fetched_at)| now - *fetched_at < SECURITY_CACHE_TTL_MS);
+        cache.insert(key, (candles.to_vec(), now));
     }
 
     /// The series of finer bars over the chart's whole span (or its `calc_bars_count` newest bars).
@@ -130,31 +143,43 @@ impl KlineSecurityDataProvider {
 
 impl SecurityDataProvider for KlineSecurityDataProvider {
     fn candles(&self, key: &SecurityKey) -> Option<Vec<Kline>> {
-        let extended = Self::extended(key);
-        let cache_key = (key.clone(), None, extended);
-        if let Some(candles) = Self::cached(&cache_key) {
+        SessionSecurityDataProvider::new(yahoo_session::snapshot()).candles(key)
+    }
+
+    fn candles_over(&self, key: &SecurityKey, chart: ChartSpan) -> Option<Vec<Kline>> {
+        SessionSecurityDataProvider::new(yahoo_session::snapshot()).candles_over(key, chart)
+    }
+}
+
+impl SecurityDataProvider for SessionSecurityDataProvider {
+    fn candles(&self, key: &SecurityKey) -> Option<Vec<Kline>> {
+        let policy = KlineSecurityDataProvider::effective_policy(key, self.0);
+        let extended = policy.extended;
+        let cache_key = (key.clone(), None, policy);
+        if let Some(candles) = KlineSecurityDataProvider::cached(&cache_key) {
             return Some(candles);
         }
-        let candles = Self::series(key, None, extended)?;
-        Self::remember(cache_key, &candles);
+        let candles = KlineSecurityDataProvider::series(key, None, extended)?;
+        KlineSecurityDataProvider::remember(cache_key, &candles);
         Some(candles)
     }
 
     fn candles_over(&self, key: &SecurityKey, chart: ChartSpan) -> Option<Vec<Kline>> {
-        let extended = Self::extended(key);
-        let cache_key = (key.clone(), Some(chart), extended);
-        if let Some(candles) = Self::cached(&cache_key) {
+        let policy = KlineSecurityDataProvider::effective_policy(key, self.0);
+        let extended = policy.extended;
+        let cache_key = (key.clone(), Some(chart), policy);
+        if let Some(candles) = KlineSecurityDataProvider::cached(&cache_key) {
             return Some(candles);
         }
         let finer = (key.interval * 1_000.0) < chart.spacing_ms as f64;
         let candles = if finer {
-            intrabars_or_series(Self::intrabars(key, chart, extended), || {
-                Self::series(key, Some(chart), extended)
+            intrabars_or_series(KlineSecurityDataProvider::intrabars(key, chart, extended), || {
+                KlineSecurityDataProvider::series(key, Some(chart), extended)
             })?
         } else {
-            Self::series(key, Some(chart), extended)?
+            KlineSecurityDataProvider::series(key, Some(chart), extended)?
         };
-        Self::remember(cache_key, &candles);
+        KlineSecurityDataProvider::remember(cache_key, &candles);
         Some(candles)
     }
 }
@@ -273,7 +298,7 @@ pub fn run_script_checked_in_range(
         Limits::default(),
         None,
         symbol.clone(),
-        Some(Box::new(KlineSecurityDataProvider)),
+        Some(Box::new(SessionSecurityDataProvider::new(yahoo_session::snapshot()))),
         visible_range,
     );
     // History loads the way the Swift controller does: the bar length and last bar index are
