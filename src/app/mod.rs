@@ -426,6 +426,7 @@ impl eframe::App for DegenViewApp {
         self.sync_viewports(ctx);
         self.sync_settings_viewport(ctx);
         self.sync_alerts_viewport(ctx);
+        self.tabs.tick_yahoo_sessions(ctx);
         self.tick_alerts();
         // Runs once per frame (not in `ui`, which also fires for the root viewport).
         self.tick_pine();

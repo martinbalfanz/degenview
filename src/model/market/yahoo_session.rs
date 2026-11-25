@@ -1,5 +1,5 @@
 //! Process-wide session policy, loaded from saved settings before market workers start.
-//! Restart to change it so open chart history cannot mix two session policies. Extended history
+//! Session changes publish a new revision so open chart histories cannot mix policies. Extended history
 //! is limited to US equity/ETF intraday candles.
 use crate::model::{DataSource, Timeframe};
 use std::sync::OnceLock;
@@ -49,9 +49,7 @@ pub(crate) fn snapshot() -> PolicySnapshot {
     PolicySnapshot::decode(policy().load(Ordering::Acquire))
 }
 
-// Kept test-only until the remaining runtime consumers can invalidate their
-// work. The settings path must not publish a live policy change yet.
-#[cfg(test)]
+/// Publish one revision only when the effective mode changes.
 fn transition(state: &AtomicU64, extended: bool) -> PolicySnapshot {
     let mut old = state.load(Ordering::Acquire);
     loop {
@@ -82,6 +80,11 @@ pub fn initialize(saved: bool) {
 
 pub fn extended_enabled() -> bool {
     snapshot().extended
+}
+
+/// Applies a persisted preference, respecting the diagnostic startup override.
+pub(crate) fn apply_saved(saved: bool) -> PolicySnapshot {
+    transition(policy(), environment_override().unwrap_or(saved))
 }
 
 pub fn overridden_by_environment() -> bool {

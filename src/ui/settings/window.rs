@@ -815,7 +815,7 @@ fn section_yahoo(
             ui,
             Icon::ChartLine,
             tr!("Extended hours"),
-            Some(tr!("Include US stock and ETF premarket and after-hours data on intraday charts. Restart DegenView to apply.")),
+            Some(tr!("Include US stock and ETF premarket and after-hours data on intraday charts and watchlist quotes. Changes apply without restarting.")),
             |ui| {
                 if card::switch(ui, &mut enabled) {
                     actions.push(SettingsAction::SetYahooExtendedHours(enabled));
@@ -831,9 +831,6 @@ fn section_yahoo(
             },
             kit::size::BODY, kit::REGULAR, theme::text_secondary(),
         ));
-        if saved != yahoo_session::extended_enabled() && !yahoo_session::overridden_by_environment() {
-            ui.label(kit::text(tr!("Restart required to apply the saved setting."), kit::size::BODY, kit::REGULAR, theme::text_secondary()));
-        }
         if let Some(status) = status {
             status_message(ui, &status.text(), status.is_error);
         }
