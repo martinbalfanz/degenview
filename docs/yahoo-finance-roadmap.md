@@ -172,3 +172,12 @@ Owner ran the full library suite at f690ee7: 8,648 passed, 1 failed, 152 ignored
 
 ### P4 — Clippy cleanup
 Owner reported three `clippy::op_ref` errors in cache-test cleanup closures at 893417c, plus extensive rustfmt differences. Removed the unnecessary right-operand references as requested by Clippy. No runtime change. Exact rustfmt output and the Rust 1.100 toolchain are not available to the editing environment; formatting remains a local mechanical pass (`cargo fmt --all`, review its diff and commit separately). Rerun `cargo fmt --all -- --check` and `cargo clippy --all-targets --all-features -- -D warnings`; confirm localization and full suite at final head. No lint suppressions.
+
+### P4 — formatting and Clippy validated
+Owner pushed the separate rustfmt commit 0216059e and reported successful completion of the requested formatting/Clippy checks (Clippy dev profile finished in 48.29s). The branch is now feature-frozen for final review. No CI workflow runs were returned for that commit. Last full library result remains 8,648 passed / 1 localization failure / 152 ignored at f690ee7; the localization fix and mechanical formatting/Clippy cleanup are subsequent, so a fully green post-fix full suite is not yet documented.
+
+Final acceptance checklist (no additional feature scope):
+- Run `cargo test --lib --locked` once on the formatted branch; confirm localization and all regression tests pass.
+- During US regular and postmarket sessions, run the respective ignored live Yahoo socket diagnostic (premarket already validated). If the vendor is silent, record the timeout and retain REST fallback rather than declaring a live pass.
+- In the app: switch regular/extended on NVDA or SPY 5m and 1h with an overlay and Pine indicator; confirm immediate correct cached restore where available, no old-mode bars or outputs, separate regular and extended quote labels, provisional rollover and REST takeover. Verify hidden tabs and replay do not retain stale preview prices; check that history can page beyond 60 days and the primary watchlist price stays regular.
+- Request independent review of the fork draft PR, focusing on provider boundaries, queue/cache invalidation, Pine semantics and vendor response handling. Compare against current upstream and agree on scope before any upstream PR or merge. Exceptional-session quote classification/shading, futures execution semantics and broader streaming support remain documented limitations or follow-ups.
