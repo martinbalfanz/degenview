@@ -88,19 +88,31 @@ impl ChartSyncSettings {
 #[derive(Clone, Copy, Debug)]
 pub struct TimeAxis<'a> {
     bars: &'a [Kline],
+    /// Optional display-only tail, represented by its open and exclusive end.
+    tail: Option<(i64, i64)>,
 }
 
 impl<'a> TimeAxis<'a> {
     pub fn new(bars: &'a [Kline]) -> Self {
-        Self { bars }
+        Self { bars, tail: None }
+    }
+
+    /// A live hover axis may include one observed slot without adding a candle
+    /// to the data or changing the navigation/snapshot axis.
+    pub(crate) fn with_preview_tail(bars: &'a [Kline], open: i64, end: i64) -> Self {
+        let tail = bars.last().filter(|last| open > last.open_time && open > last.close_time && end > open).map(|_| (open, end));
+        Self { bars, tail }
     }
 
     pub fn len(&self) -> usize {
-        self.bars.len()
+        self.bars.len() + usize::from(self.tail.is_some())
     }
 
     /// Time of slot edge `index`, `0..=len`.
     fn edge(&self, index: usize) -> f64 {
+        if let Some((open, end)) = self.tail && index >= self.bars.len() {
+            return if index == self.bars.len() { open as f64 } else { end as f64 };
+        }
         match self.bars.get(index) {
             Some(bar) => bar.open_time as f64,
             None => self.bars.len().checked_sub(1).map_or(0.0, |last| {
@@ -113,6 +125,9 @@ impl<'a> TimeAxis<'a> {
     /// bar that closes as it opens, the spacing to the next bar's open (the last bar takes the
     /// spacing before it, a lone bar a millisecond).
     fn span(&self, index: usize) -> f64 {
+        if let Some((open, end)) = self.tail && index == self.bars.len() {
+            return (end - open) as f64;
+        }
         let bar = &self.bars[index];
         let own = bar.close_time - bar.open_time + 1;
         if own > 1 {
@@ -130,14 +145,14 @@ impl<'a> TimeAxis<'a> {
     /// can place.
     pub fn time_at(&self, x: f64) -> Option<f64> {
         self.bars.first()?;
-        let len = self.bars.len() as f64;
+        let len = self.len() as f64;
         if !x.is_finite() {
             return None;
         }
         Some(if x <= 0.0 {
             self.edge(0) + x * self.span(0)
         } else if x >= len {
-            self.edge(self.bars.len()) + (x - len) * self.span(self.bars.len() - 1)
+            self.edge(self.len()) + (x - len) * self.span(self.len() - 1)
         } else {
             let index = x.floor() as usize;
             let (from, to) = (self.edge(index), self.edge(index + 1));
@@ -148,7 +163,7 @@ impl<'a> TimeAxis<'a> {
     /// The slot position of timestamp `time` (ms): the inverse of [`Self::time_at`].
     pub fn x_at(&self, time: f64) -> Option<f64> {
         self.bars.first()?;
-        let len = self.bars.len();
+        let len = self.len();
         if !time.is_finite() {
             return None;
         }
@@ -159,10 +174,11 @@ impl<'a> TimeAxis<'a> {
             len as f64 + (time - end) / self.span(len - 1)
         } else {
             // The bar that has begun by `time`; at least the first, as `time > start`.
-            let index = self
-                .bars
-                .partition_point(|bar| bar.open_time as f64 <= time)
-                .saturating_sub(1);
+            let index = if self.tail.is_some_and(|(open, _)| time >= open as f64) {
+                self.bars.len()
+            } else {
+                self.bars.partition_point(|bar| bar.open_time as f64 <= time).saturating_sub(1)
+            };
             let (from, to) = (self.edge(index), self.edge(index + 1));
             if to > from {
                 index as f64 + (time - from) / (to - from)
@@ -493,3 +509,19 @@ impl SyncHub {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[test]
+fn yahoo_preview_hover_axis_compresses_session_gap_and_round_trips() {
+    let bars = [Kline { open_time: 0, close_time: 299_999, open: 100.0, high: 102.0, low: 98.0, close: 101.0, volume: 1.0 }];
+    let open = 3 * 86_400_000;
+    let axis = TimeAxis::with_preview_tail(&bars, open, open + 300_000);
+    assert_eq!(axis.len(), 2);
+    assert_eq!(axis.time_at(1.0), Some(open as f64));
+    assert_eq!(axis.time_at(1.5), Some((open + 150_000) as f64));
+    assert_eq!(axis.x_at((open + 150_000) as f64), Some(1.5));
+    assert_eq!(axis.time_at(2.0), Some((open + 300_000) as f64));
+    assert_eq!(axis.x_at((open / 2) as f64), Some(0.5));
+    assert_eq!(TimeAxis::new(&bars).len(), 1);
+    assert_eq!(TimeAxis::with_preview_tail(&bars, 0, 300_000).len(), 1);
+}

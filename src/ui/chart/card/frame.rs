@@ -713,7 +713,8 @@ impl ChartCard {
         }
         if let Some((crosshair, x)) = decor.crosshair.and_then(|crosshair| {
             let slots = view.geometry(plot, bars.len()).slots();
-            self.crosshair_column(crosshair, decor.chart_id, data.source, plot, slots, bars)
+            let axis = view.hover_axis(bars, plot, data.preview, self.timeframe);
+            self.crosshair_column(crosshair, decor.chart_id, data.source, plot, slots, axis)
                 .map(|x| (crosshair, x))
         }) {
             self.draw_crosshair(

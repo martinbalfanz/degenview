@@ -593,7 +593,7 @@ impl ChartCard {
             },
             bars.len(),
         );
-        let time = self.takes_part_in_sync(source).then(|| TimeAxis::new(bars));
+        let time = self.takes_part_in_sync(source).then(|| view.hover_axis(bars, plot, data.preview, self.timeframe));
         body::report_hover(&mut pointer, &response, plot, &view, &projection, time);
 
         pointer.clicked = response.clicked();

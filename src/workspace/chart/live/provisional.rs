@@ -71,13 +71,12 @@ impl Provisional {
         };
         let bucket = bucket_start_ms(tf, quote.timestamp_ms);
         let next = next_bucket_start_ms(tf, last.open_time);
-        // Only an observed, contiguous next bucket can occupy the existing
-        // future slot on the UTC grid. Never bridge gaps or fabricate bars.
-        let contiguous = bucket == next
-            && last.close_time.checked_add(1) == Some(next)
-            && next_bucket_start_ms(tf, next) - next == next - last.open_time;
+        // The caller has already checked the quote's current trading session.
+        // One observed newer bucket may follow a gap, but no intervening bars
+        // are invented and a late observation cannot rewind the preview.
+        let newer = bucket >= next && bucket > last.close_time;
         if !tf.is_intraday() || !quote.price.is_finite() || quote.price <= 0.0
-            || (bucket != last.open_time && !contiguous)
+            || (bucket != last.open_time && !newer)
         {
             self.sampled = None;
             return None;
@@ -162,7 +161,24 @@ mod tests {
         assert!(state.observe(tf, &bar(300_000), observe(108.0, 302_000)).is_none());
         let newer = state.observe(tf, &bar(300_000), observe(103.0, 303_000)).unwrap();
         assert_eq!((newer.open, newer.high, newer.low, newer.close), (100.0, 103.0, 98.0, 103.0));
-        assert!(state.observe(tf, &bar(300_000), observe(200.0, 900_000)).is_none());
+        let gap = state.observe(tf, &bar(300_000), observe(200.0, 900_000)).unwrap();
+        assert_eq!((gap.open_time, gap.open, gap.high, gap.low), (900_000, 200.0, 200.0, 200.0));
+        assert!(state.observe(tf, &bar(300_000), observe(100.0, 600_000)).is_none());
+    }
+
+    #[test]
+    fn yahoo_preview_across_session_gap_never_fabricates_intervening_bars() {
+        let mut state = Provisional::default();
+        let tf = Timeframe::parse("5m").unwrap();
+        let rest = bar(0);
+        let start = 3 * 86_400_000;
+        let observe = |price, timestamp_ms| Some(Observation { price, timestamp_ms });
+        let first = state.observe(tf, &rest, observe(90.0, start + 1000)).unwrap();
+        assert_eq!((first.open_time, first.open, first.close), (start, 90.0, 90.0));
+        let second = state.observe(tf, &rest, observe(92.0, start + 2000)).unwrap();
+        assert_eq!((second.open, second.high, second.low, second.close), (90.0, 92.0, 90.0, 92.0));
+        assert!(state.observe(tf, &rest, observe(200.0, start - 1000)).is_none());
+        assert!(state.observe(tf, &bar(start), observe(92.0, start + 2000)).is_none());
     }
 
     #[test]

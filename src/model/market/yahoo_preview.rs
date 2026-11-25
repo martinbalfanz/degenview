@@ -10,9 +10,9 @@ pub struct Preview {
 }
 
 impl Preview {
-    /// True only when the existing time axis can place this at the next slot.
+    /// A newer observed bucket occupies one slot, even across a session gap.
     pub(crate) fn is_next_after(self, last: &crate::model::Kline) -> bool {
-        last.close_time.checked_add(1) == Some(self.open_time)
+        self.open_time > last.open_time && self.open_time > last.close_time
     }
 
     /// For a temporary render-only copy of the REST candle. Do not change

@@ -16,7 +16,7 @@ impl ChartCard {
         source: DataSource,
         plot: Rect,
         slots: Slots,
-        bars: &[Kline],
+        axis: TimeAxis<'_>,
     ) -> Option<f32> {
         if crosshair.owner_id == chart_id {
             return Some(plot.left() + plot.width() * crosshair.x_fraction as f32);
@@ -24,7 +24,7 @@ impl ChartCard {
         if !self.takes_part_in_sync(source) {
             return None;
         }
-        let x = slots.x(TimeAxis::new(bars).x_at(crosshair.time?)?);
+        let x = slots.x(axis.x_at(crosshair.time?)?);
         plot.x_range().contains(x).then_some(x)
     }
 
