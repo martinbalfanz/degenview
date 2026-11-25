@@ -82,6 +82,8 @@ pub(super) struct Decor<'a> {
     /// The watermark names the replay.
     pub replay_active: bool,
     pub time_lock: bool,
+    /// Only the interactive chart draws the current indicative quote; never snapshots.
+    pub indicative_quote: bool,
     pub crosshair: Option<&'a CrosshairInfo>,
 }
 
@@ -409,6 +411,9 @@ impl ChartCard {
                 ),
                 None => data.source.display_name().to_owned(),
             };
+            if self.timeframe.is_some_and(|tf| crate::model::market::yahoo_session::extended_candles(data.source, data.symbol, tf)) {
+                subtitle.push_str(&format!(" · {}", tr!("Extended hours")));
+            }
             if let Some(market) = data.source.yahoo_market(data.symbol) {
                 subtitle.push_str(&format!(" · {} · {}", market.name(), market.currency()));
             } else if let Some(market) = data.source.yahoo_derivative(data.symbol) {
@@ -522,6 +527,20 @@ impl ChartCard {
             shown_synthetic.and_then(|_| bars.last()),
             style,
         );
+        if decor.indicative_quote && !decor.replay_active
+            && data.source == DataSource::Yahoo
+            && data.source.yahoo_stream_symbol(data.symbol)
+            && view.end == bars.len()
+            && let Some(price) = self.yahoo_quote
+        {
+            if chart_type == ChartType::Candles
+                && let Some(preview) = self.yahoo_preview
+                && candles.last().is_some_and(|last| last.open_time == preview.open_time)
+            {
+                self.draw_yahoo_preview(&clipped, plot, scale, x_for(shown.len() - 1), slot_width, preview);
+            }
+            self.draw_yahoo_quote(&clipped, plot, scale, price, candles.last(), style);
+        }
         let main_tag_y = candles.last().map(|last| scale.y(last.close));
         self.paint_overlay_tags(
             &main_painter,

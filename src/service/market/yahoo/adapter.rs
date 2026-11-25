@@ -65,6 +65,11 @@ fn collect_sessions(value: &serde_json::Value, sessions: &mut Vec<(i64, i64)>) {
 /// Use that date for daily
 /// bars, and real UTC instants for intraday bars (not today's GMT offset).
 fn native_bars(chart: Chart, timeframe: Timeframe) -> Result<Vec<Kline>, ProviderError> {
+    let extended = crate::model::market::yahoo_session::extended_candles(DataSource::Yahoo, &chart.meta.symbol, timeframe);
+    native_bars_with_session(chart, timeframe, extended)
+}
+
+fn native_bars_with_session(chart: Chart, timeframe: Timeframe, extended: bool) -> Result<Vec<Kline>, ProviderError> {
     let meta = chart.meta;
     let index_scale = meta.index_price_scale();
     let derivative = meta.derivative();
@@ -108,6 +113,7 @@ fn native_bars(chart: Chart, timeframe: Timeframe) -> Result<Vec<Kline>, Provide
         // when metadata confirms the exact close and the previous bar
         // belongs to that same regular session.
         if timeframe.is_intraday()
+            && !extended
             && !no_volume
             && bar.volume.is_none_or(|volume| volume == 0.0)
             && bar.open == bar.close
@@ -184,7 +190,7 @@ fn fetch_range(
         interval,
         start_seconds,
         end_seconds,
-        false,
+        crate::model::market::yahoo_session::extended_candles(DataSource::Yahoo, symbol, timeframe),
     )?;
     shape_range(response, plan, start, start_ms, end, max)
 }

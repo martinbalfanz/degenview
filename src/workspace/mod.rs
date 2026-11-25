@@ -733,6 +733,7 @@ impl ChartWorkspace {
 impl Drop for ChartWorkspace {
     fn drop(&mut self) {
         self.quote_coordinator.release(self.id);
+        self.quote_coordinator.release(chart::live::yahoo_chart_quote_owner(self.id));
         self.quote_coordinator.release(editor::quote_owner(self.id));
         self.quote_coordinator
             .release(crate::ui::chart::symbol_picker::quote_owner(self.id));

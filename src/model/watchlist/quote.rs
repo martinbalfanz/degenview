@@ -174,7 +174,13 @@ impl WatchlistQuote {
             },
             freshness: evaluate_freshness(source, received_at_ms, received_at_ms),
             note: (source == DataSource::Yahoo)
-                .then(|| tr!("Yahoo prices may be delayed").to_owned()),
+                .then(|| {
+                    if crate::model::market::yahoo_session::extended_enabled() {
+                        tr!("Yahoo quote may include extended hours and be delayed").to_owned()
+                    } else {
+                        tr!("Yahoo prices may be delayed").to_owned()
+                    }
+                }),
         }
     }
 }

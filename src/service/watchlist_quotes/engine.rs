@@ -157,6 +157,9 @@ pub struct Engine {
     config: Config,
     consumers: HashMap<u64, Consumer>,
     known: HashMap<String, WatchlistQuote>,
+    // Successful metadata-validated regular-session REST snapshots, kept
+    // independently of the indicative stream and its change reference.
+    yahoo_rest: HashMap<String, SourceQuote>,
     /// When each price was last confirmed by its provider; what freshness is judged by.
     received: HashMap<String, i64>,
     sources: HashMap<DataSource, SourceState>,
@@ -182,6 +185,7 @@ impl Engine {
             config,
             consumers: HashMap::new(),
             known: HashMap::new(),
+            yahoo_rest: HashMap::new(),
             received: HashMap::new(),
             sources: HashMap::new(),
             rejected: HashMap::new(),
@@ -354,6 +358,9 @@ impl Engine {
             .map(|products| products.keys().cloned().collect())
             .unwrap_or_default();
         products.sort();
+        if source == DataSource::Yahoo {
+            products.truncate(100);
+        }
         products
     }
 
@@ -397,6 +404,7 @@ impl Engine {
         let remembered: Vec<String> = self
             .known
             .keys()
+            .chain(self.yahoo_rest.keys())
             .chain(self.received.keys())
             .chain(self.rejected.keys())
             .chain(self.stream_subscribed_at.keys())
@@ -423,6 +431,7 @@ impl Engine {
         for key in &expired {
             self.idle_since.remove(key);
             self.known.remove(key);
+            self.yahoo_rest.remove(key);
             self.received.remove(key);
             self.rejected.remove(key);
             self.stream_subscribed_at.remove(key);
@@ -446,7 +455,9 @@ impl Engine {
     fn sync_streams(&mut self, wanted: &BTreeMap<String, InstrumentId>, now: i64) {
         let mut streams: HashMap<DataSource, HashMap<String, String>> = HashMap::new();
         for (key, instrument) in wanted {
-            if instrument.source.streams_quotes() {
+            if instrument.source.streams_quotes()
+                && (instrument.source != DataSource::Yahoo || instrument.source.yahoo_stream_symbol(&instrument.api_symbol()))
+            {
                 streams
                     .entry(instrument.source)
                     .or_default()
@@ -501,6 +512,9 @@ impl Engine {
         }
         match instrument.source {
             DataSource::CoinMarketCap => None,
+            // Yahoo tick messages lack complete validated metadata. Keep the
+            // regular REST snapshot cadence even when the socket is active.
+            DataSource::Yahoo => Some(DataSource::Yahoo),
             source if source.streams_quotes() => {
                 // The socket supplies prices; REST fills a product it has not answered, and
                 // refreshes one it has gone quiet on, so a thin market's price never ages.
@@ -605,6 +619,30 @@ impl Engine {
 
         for (key, request) in &planned.requests {
             if let Some(quote) = outcome.quotes.get(&request.symbol) {
+                if source == DataSource::Yahoo {
+                    if source.yahoo_stream_symbol(&request.symbol) && quote.timestamp_ms.is_some()
+                        && self.yahoo_rest.get(key).is_none_or(|previous| quote.timestamp_ms >= previous.timestamp_ms)
+                    {
+                        self.yahoo_rest.insert(key.clone(), *quote);
+                    }
+                    // A slow snapshot must not rewind a more recent stream tick.
+                    if let Some(last) = self.known.get(key)
+                        && last.timestamp_ms.is_some_and(|old| quote.timestamp_ms.is_none_or(|new| new < old))
+                        && last.timestamp_ms.is_some_and(|ts| now.saturating_sub(ts) <= 30 * 60_000)
+                    {
+                        // Refresh the reference from REST without rewinding the price.
+                        if let Some(rest) = self.yahoo_rest.get(key)
+                            && let (Some(price), Some(ts)) = (last.last, last.timestamp_ms)
+                        {
+                            let mut observation = SourceQuote { price, timestamp_ms: Some(ts), volume_24h: last.volume, volume_kind: last.volume_kind, ..SourceQuote::default() };
+                            yahoo_reference(rest, &mut observation);
+                            let confirmed = self.received.get(key).copied().unwrap_or(now);
+                            updates.insert(key.clone(), WatchlistQuote::from_source(source, &observation, confirmed));
+                        }
+                        self.rejected.remove(key);
+                        continue;
+                    }
+                }
                 let quote = self.with_stream_reference(source, key, *quote, now);
                 updates.insert(
                     key.clone(),
@@ -623,6 +661,7 @@ impl Engine {
                     },
                 );
             } else if source_answered && outcome.rejected.contains(&request.symbol) {
+                self.yahoo_rest.remove(key);
                 self.rejected
                     .insert(key.clone(), now + self.config.rejected_retry_ms);
                 updates.insert(
@@ -656,7 +695,7 @@ impl Engine {
         quote: SourceQuote,
         now: i64,
     ) -> SourceQuote {
-        if quote.previous_day_price.is_some() || !source.streams_quotes() {
+        if source == DataSource::Yahoo || quote.previous_day_price.is_some() || !source.streams_quotes() {
             return quote;
         }
         let reference = self
@@ -734,6 +773,17 @@ impl Engine {
             else {
                 continue;
             };
+            if tick.source == DataSource::Yahoo {
+                // REST must first establish the market; socket payloads alone
+                // cannot verify all the currency and exchange metadata.
+                let previous = latest.get(key).or_else(|| self.known.get(key));
+                let (Some(previous), Some(rest)) = (previous, self.yahoo_rest.get(key)) else { continue };
+                if let Some(quote) = yahoo_tick(previous, rest, tick.quote, now) {
+                    latest.insert(key.clone(), quote);
+                    heard.insert(tick.source);
+                }
+                continue;
+            }
             if let Some(reference) = tick.quote.previous_day_price {
                 self.stream_references.insert(key.clone(), (reference, now));
             }
@@ -754,7 +804,10 @@ impl Engine {
             let state = self.sources.entry(source).or_default();
             state.last_successful_quote_ms = Some(now);
             state.last_error = None;
-            state.next_allowed_ms = i64::MIN;
+            // A successful ticker must not cancel REST rate-limit backoff.
+            if source != DataSource::Yahoo {
+                state.next_allowed_ms = i64::MIN;
+            }
         }
         self.book.apply(latest);
     }
@@ -776,6 +829,97 @@ const ALL_SOURCES: [DataSource; 14] = [
     DataSource::Kalshi,
     DataSource::CoinMarketCap,
 ];
+
+/// Resolve a change reference from the last validated regular-session snapshot.
+/// Premarket compares to the preceding regular close; regular session compares
+/// to the provider's previous close. After hours compares to today's final
+/// regular close only if the snapshot is stamped at or near the normal close.
+/// Never carry regular volume into an extended quote.
+fn yahoo_reference(rest: &SourceQuote, tick: &mut SourceQuote) {
+    use crate::model::market::yahoo_session::{Session, session_at};
+    tick.previous_day_price = None;
+    let (Some(old), Some(ts)) = (rest.timestamp_ms, tick.timestamp_ms) else { return };
+    // New York date, not UTC (after-hours crosses UTC midnight).
+    let day = |ms: i64| {
+        let offset = crate::pine::time::zone_offset_secs(Some("America/New_York"), ms);
+        (ms + offset * 1000).div_euclid(86_400_000)
+    };
+    let same_day = day(old) == day(ts);
+    let recent_prior = day(ts) > day(old) && day(ts) - day(old) <= 4;
+    match session_at(ts) {
+        Some(Session::Pre) => {
+            if recent_prior {
+                tick.previous_day_price = Some(rest.price);
+            }
+            tick.volume_24h = None;
+            tick.volume_kind = None;
+        }
+        Some(Session::Regular) => {
+            if same_day {
+                tick.previous_day_price = rest.previous_day_price;
+                if tick.volume_24h.is_none() {
+                    tick.volume_24h = rest.volume_24h;
+                    tick.volume_kind = rest.volume_kind;
+                }
+            } else if recent_prior {
+                tick.previous_day_price = Some(rest.price);
+            }
+        }
+        Some(Session::Post) => {
+            // Avoid substituting a midday quote for the close.
+            if same_day && session_at(old - 60_000) == Some(Session::Regular)
+                && session_at(old + 60_000) == Some(Session::Post)
+            {
+                tick.previous_day_price = Some(rest.price);
+            }
+            tick.volume_24h = None;
+            tick.volume_kind = None;
+        }
+        None => {}
+    }
+}
+
+fn yahoo_tick(previous: &WatchlistQuote, rest: &SourceQuote, mut tick: SourceQuote, now: i64) -> Option<WatchlistQuote> {
+    let old = previous.timestamp_ms?;
+    let timestamp = tick.timestamp_ms?;
+    if timestamp <= old || timestamp > now.saturating_add(60_000)
+        || now.saturating_sub(timestamp) > 30 * 60_000
+    {
+        return None;
+    }
+    yahoo_reference(rest, &mut tick);
+    Some(WatchlistQuote::from_source(DataSource::Yahoo, &tick, now))
+}
+
+#[cfg(test)]
+mod yahoo_stream_tests {
+    use super::*;
+    #[test]
+    fn sparse_tick_uses_rest_reference_and_never_rewinds() {
+        let day = crate::pine::time::calendar::make(2026, 11, 25, 15, 0, 0, 0).unwrap();
+        let rest = SourceQuote { price: 100.0, previous_day_price: Some(90.0), timestamp_ms: Some(day + 1000), ..SourceQuote::default() };
+        let previous = WatchlistQuote::from_source(DataSource::Yahoo, &rest, day + 1000);
+        let tick = SourceQuote { price: 105.0, timestamp_ms: Some(day + 2000), ..SourceQuote::default() };
+        let quote = yahoo_tick(&previous, &rest, tick, day + 2000).unwrap();
+        assert_eq!(quote.last, Some(105.0));
+        assert_eq!(quote.change, Some(15.0));
+        assert_eq!(quote.freshness, Freshness::Delayed);
+        assert!(yahoo_tick(&quote, &rest, tick, day + 3000).is_none());
+    }
+
+    #[test]
+    fn premarket_uses_prior_regular_close_without_regular_volume() {
+        let pre = 1795607849000;
+        let close = crate::pine::time::calendar::make(2026, 11, 24, 21, 0, 0, 0).unwrap();
+        let rest = SourceQuote { price: 140.0, previous_day_price: Some(130.0), timestamp_ms: Some(close), volume_24h: Some(10_000.0), ..SourceQuote::default() };
+        let previous = WatchlistQuote::from_source(DataSource::Yahoo, &rest, pre);
+        let tick = SourceQuote { price: 147.5, timestamp_ms: Some(pre), ..SourceQuote::default() };
+        let quote = yahoo_tick(&previous, &rest, tick, pre).unwrap();
+        assert_eq!(quote.change, Some(7.5));
+        assert_eq!(quote.volume, None);
+        assert_eq!(quote.last, Some(147.5));
+    }
+}
 
 /// A stable order for sources, so rounds are deterministic.
 fn source_order(source: DataSource) -> u8 {

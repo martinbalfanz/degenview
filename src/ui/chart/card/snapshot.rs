@@ -308,6 +308,7 @@ impl ChartCard {
                     chart_id: 0,
                     replay_active: input.replay_active,
                     time_lock: false,
+                    indicative_quote: false,
                     crosshair: None,
                 },
                 &mut overlays,

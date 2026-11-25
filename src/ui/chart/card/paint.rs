@@ -408,6 +408,68 @@ impl ChartCard {
         );
     }
 
+    /// An outlined candle silhouette shows observed prices without hiding
+    /// the authoritative REST body. It is not a trade-complete OHLC candle.
+    pub(super) fn draw_yahoo_preview(
+        &self,
+        painter: &egui::Painter,
+        plot: Rect,
+        scale: &PriceScale,
+        x: f32,
+        slot_width: f32,
+        preview: crate::model::market::yahoo_preview::Preview,
+    ) {
+        let (o, h, l, c) = (scale.y(preview.open), scale.y(preview.high), scale.y(preview.low), scale.y(preview.close));
+        if ![o, h, l, c, x].into_iter().all(f32::is_finite) || !plot.x_range().contains(x) {
+            return;
+        }
+        let tint = theme::text_secondary().gamma_multiply(0.85);
+        let half = (slot_width * 0.42).clamp(1.5, 24.0);
+        let stroke = Stroke::new(1.0, tint);
+        let top = o.min(c);
+        let bottom = o.max(c).max(top + 1.0);
+        painter.extend(Shape::dashed_line(&[Pos2::new(x, h), Pos2::new(x, top)], stroke, 2.0, 2.0));
+        painter.extend(Shape::dashed_line(&[Pos2::new(x, bottom), Pos2::new(x, l)], stroke, 2.0, 2.0));
+        let body = Rect::from_min_max(Pos2::new(x - half, top), Pos2::new(x + half, bottom));
+        painter.rect_stroke(body, 0.0, stroke, StrokeKind::Outside);
+    }
+
+    /// Draw an indicative price separately from the authoritative candle-close tag.
+    /// Deliberately does not affect scaling or any series used by scripts.
+    pub(super) fn draw_yahoo_quote(
+        &self,
+        painter: &egui::Painter,
+        plot: Rect,
+        scale: &PriceScale,
+        price: f64,
+        last: Option<&Kline>,
+        style: &CanvasStyle,
+    ) {
+        let y = scale.y(price);
+        if !y.is_finite() || !plot.y_range().contains(y) || plot.width() < 140.0 || plot.height() < 18.0 {
+            return;
+        }
+        let tint = theme::text_secondary();
+        if last.is_none_or(|bar| (scale.y(bar.close) - y).abs() > 2.0) {
+            painter.extend(Shape::dashed_line(
+                &[Pos2::new(plot.left(), y), Pos2::new(plot.right(), y)],
+                Stroke::new(1.0, tint.gamma_multiply(0.65)),
+                6.0,
+                4.0,
+            ));
+        }
+        let value = scale.tag_label(self.appearance.price_format(), price);
+        let label = crate::i18n::tr!("Yahoo quote {price} (may be delayed)", price = value);
+        let label_y = (y - 9.0).clamp(plot.top() + 9.0, plot.bottom() - 9.0);
+        painter.text(
+            Pos2::new(plot.right() - 6.0, label_y),
+            Align2::RIGHT_CENTER,
+            label,
+            style.price_font(),
+            tint,
+        );
+    }
+
     /// A bar's time as the chart writes it: to the second on a candle shorter than a minute.
     pub(super) fn time_text(&self, epoch_ms: i64) -> String {
         if self.shows_seconds() {

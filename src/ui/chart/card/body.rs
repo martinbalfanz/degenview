@@ -547,6 +547,7 @@ impl ChartCard {
                 chart_id,
                 replay_active: overlays.replay.active,
                 time_lock: true,
+                indicative_quote: true,
                 crosshair,
             },
             &mut overlays,
