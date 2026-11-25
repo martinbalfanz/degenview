@@ -555,6 +555,32 @@ impl ChartWorkspace {
 
     // MARK: Grid
 
+    /// Also called for inactive tabs before background script/agent consumers
+    /// read their history. A pending Yahoo fetch can complete without opening
+    /// the tab; regular periodic refresh remains owned by the visible chart.
+    pub(crate) fn sync_yahoo_session(&mut self, ctx: &egui::Context) -> bool {
+        let policy = crate::model::market::yahoo_session::snapshot();
+        let mut changed = false;
+        for chart in &mut self.charts {
+            chart.chart.sync_pine_session(policy);
+            if chart.prepare_yahoo_session(self.timeframe, policy) {
+                chart.fetch_with_session(self.timeframe, ctx, policy);
+                changed = true;
+            } else if chart.is_market() && chart.source.yahoo_stream_symbol(&chart.symbol)
+                && self.timeframe.is_intraday()
+            {
+                chart.receive_fetch(self.timeframe);
+            }
+        }
+        if changed {
+            self.replay.rebase_on_new_bars();
+            self.drop_rulers();
+            self.link_state.series_changed();
+            self.forget_views(None);
+        }
+        changed
+    }
+
     /// Draws the workspace. The paper host is passed as its shared handle and locked only around
     /// the parts that edit it: the order sheet and the venue pill read it through the trading hub,
     /// which locks the same mutex, so a guard held across the whole frame would deadlock them.
@@ -567,6 +593,7 @@ impl ChartWorkspace {
         // Everything below the tab strip: the favorites bar may be moved over all of it.
         let window = ui.max_rect();
         let timeframe = self.timeframe;
+        self.sync_yahoo_session(&ctx);
         for chart in &mut self.charts {
             chart.receive_fetch(timeframe);
             chart.receive_older(timeframe);
@@ -575,7 +602,6 @@ impl ChartWorkspace {
                 chart.fetch(timeframe, &ctx);
             }
         }
-
         self.tick_link_probation(&ctx);
         self.tick_overlays(&ctx);
         self.update_live_feeds(&ctx);

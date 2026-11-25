@@ -1,4 +1,5 @@
-use crate::model::InstrumentId;
+use crate::model::{DataSource, InstrumentId};
+use crate::model::market::yahoo_session;
 use crate::model::watchlist::quote::WatchlistQuote;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,6 +16,7 @@ pub struct WatchlistQuoteBook {
 struct Inner {
     quotes: RwLock<HashMap<String, WatchlistQuote>>,
     revision: AtomicU64,
+    yahoo_revision: AtomicU64,
 }
 
 impl WatchlistQuoteBook {
@@ -23,7 +25,13 @@ impl WatchlistQuoteBook {
     }
 
     pub fn get_by_key(&self, key: &str) -> Option<WatchlistQuote> {
-        self.inner.quotes.read().ok()?.get(key).cloned()
+        let quotes = self.inner.quotes.read().ok()?;
+        if key.split_once(':').is_some_and(|(source, symbol)| {
+            source == DataSource::Yahoo.watchlist_slug() && DataSource::Yahoo.yahoo_stream_symbol(symbol)
+        }) && self.inner.yahoo_revision.load(Ordering::Acquire) != yahoo_session::snapshot().revision {
+            return None;
+        }
+        quotes.get(key).cloned()
     }
 
     /// Bumps whenever any quote changes, so a sorted list knows when to re-sort.
@@ -45,6 +53,13 @@ impl WatchlistQuoteBook {
             self.inner.revision.fetch_add(1, Ordering::AcqRel);
         }
         changed
+    }
+
+    /// Restore the baseline before allowing reads for the new policy revision.
+    pub(super) fn apply_yahoo_session(&self, updates: HashMap<String, WatchlistQuote>, revision: u64) {
+        self.apply(updates);
+        self.inner.yahoo_revision.store(revision, Ordering::Release);
+        self.inner.revision.fetch_add(1, Ordering::AcqRel);
     }
 
     /// Replaces quotes for the given keys; an unchanged quote does not count as a change.

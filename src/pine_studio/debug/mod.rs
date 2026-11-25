@@ -596,7 +596,9 @@ impl DebugPanel {
         config.theme = Some(feed.theme);
         config.timeframe_seconds = feed.timeframe_seconds;
         config.libraries = libraries;
-        config.security_data = Some(Box::new(crate::host::pine::KlineSecurityDataProvider));
+        config.security_data = Some(Box::new(crate::host::pine::SessionSecurityDataProvider::new(
+            crate::model::market::yahoo_session::snapshot(),
+        )));
         config.breakpoints = self.state.specs();
         config.watches = self.state.watches.clone();
         config.stop_on_entry = mode == StartMode::Entry;
@@ -625,6 +627,23 @@ impl DebugPanel {
         self.shown = None;
         self.pending.clear();
         self.reveal_stop = false;
+    }
+
+    /// Drop the old dataset's run and its output, without touching breakpoints
+    /// or watches. A new debugging session is started explicitly by the user.
+    pub(in crate::pine_studio) fn invalidate_session_policy(&mut self) {
+        let had_session = self.session.is_some();
+        self.end_session();
+        self.outcome = None;
+        self.logs = LogHistory::default();
+        self.log_epoch = now_epoch();
+        self.hits.clear();
+        if had_session {
+            self.notice = Some(Notice {
+                text: tr!("Trading session changed. Start debugging again to use the new data.").to_owned(),
+                error: false,
+            });
+        }
     }
 
     /// Applies the toolbar's commands. `Restart` is the manager's, because it needs a fresh feed.

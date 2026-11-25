@@ -64,9 +64,9 @@ fn collect_sessions(value: &serde_json::Value, sessions: &mut Vec<(i64, i64)>) {
 /// The supported regular sessions occur within their UTC date.
 /// Use that date for daily
 /// bars, and real UTC instants for intraday bars (not today's GMT offset).
+#[cfg(test)]
 fn native_bars(chart: Chart, timeframe: Timeframe) -> Result<Vec<Kline>, ProviderError> {
-    let extended = crate::model::market::yahoo_session::extended_candles(DataSource::Yahoo, &chart.meta.symbol, timeframe);
-    native_bars_with_session(chart, timeframe, extended)
+    native_bars_with_session(chart, timeframe, false)
 }
 
 fn native_bars_with_session(chart: Chart, timeframe: Timeframe, extended: bool) -> Result<Vec<Kline>, ProviderError> {
@@ -164,6 +164,7 @@ fn fetch_range(
     end_ms: i64,
     max: usize,
     now_ms: i64,
+    extended: bool,
 ) -> Result<Vec<Kline>, ProviderError> {
     let plan = crate::service::market::candles::plan(DataSource::Yahoo, timeframe)?;
     let interval = native(plan.base())?;
@@ -190,9 +191,9 @@ fn fetch_range(
         interval,
         start_seconds,
         end_seconds,
-        crate::model::market::yahoo_session::extended_candles(DataSource::Yahoo, symbol, timeframe),
+        extended,
     )?;
-    shape_range(response, plan, start, start_ms, end, max)
+    shape_range(response, plan, start, start_ms, end, max, extended)
 }
 
 fn shape_range(
@@ -202,6 +203,7 @@ fn shape_range(
     start: i64,
     end: i64,
     max: usize,
+    extended: bool,
 ) -> Result<Vec<Kline>, ProviderError> {
     // Yahoo sometimes includes a forming/latest observation. A historical
     // range must never incorporate a trade from at or after its exclusive end.
@@ -212,12 +214,53 @@ fn shape_range(
             date >= requested_start && date < end && ms < end
         })
     });
-    let bars = native_bars(response, plan.base())?;
+    let bars = native_bars_with_session(response, plan.base(), extended)?;
     let mut candles = plan.shape_since(bars, usize::MAX, requested_start, usize::MAX);
     candles.retain(|bar| bar.open_time >= start && bar.open_time < end);
     let skip = candles.len().saturating_sub(max.min(MAX_BARS));
     candles.drain(..skip);
     Ok(candles)
+}
+
+impl Yahoo {
+    pub(crate) fn fetch_klines_with_session(
+        &self,
+        symbol: &str,
+        timeframe: Timeframe,
+        limit: u32,
+        extended: bool,
+    ) -> Result<Vec<Kline>, ProviderError> {
+        let now = crate::clock::now_ms();
+        let count = i64::from(limit).min(MAX_BARS as i64).saturating_add(1);
+        let factor = if timeframe.is_intraday() { 8 } else { 2 };
+        let span = timeframe.nominal_ms().saturating_mul(count).saturating_mul(factor);
+        let start = now.saturating_sub(span.max(7 * DAY_MS)).max(0);
+        let bars = fetch_range(symbol, timeframe, start, now, limit as usize, now, extended)?;
+        if bars.is_empty() && limit > 0 {
+            return Err(ProviderError::other(format!("No Yahoo data for {symbol}")));
+        }
+        Ok(bars)
+    }
+
+    pub(crate) fn fetch_klines_range_with_session(
+        &self,
+        symbol: &str,
+        timeframe: Timeframe,
+        start_ms: i64,
+        end_ms: i64,
+        max: usize,
+        extended: bool,
+    ) -> Result<Vec<Kline>, ProviderError> {
+        fetch_range(
+            symbol,
+            timeframe,
+            start_ms,
+            end_ms,
+            max,
+            crate::clock::now_ms(),
+            extended,
+        )
+    }
 }
 
 impl MarketSource for Yahoo {
@@ -227,16 +270,12 @@ impl MarketSource for Yahoo {
         timeframe: Timeframe,
         limit: u32,
     ) -> Result<Vec<Kline>, ProviderError> {
-        let now = crate::clock::now_ms();
-        let count = i64::from(limit).min(MAX_BARS as i64).saturating_add(1);
-        let factor = if timeframe.is_intraday() { 8 } else { 2 };
-        let span = timeframe.nominal_ms().saturating_mul(count).saturating_mul(factor);
-        let start = now.saturating_sub(span.max(7 * DAY_MS)).max(0);
-        let bars = fetch_range(symbol, timeframe, start, now, limit as usize, now)?;
-        if bars.is_empty() && limit > 0 {
-            return Err(ProviderError::other(format!("No Yahoo data for {symbol}")));
-        }
-        Ok(bars)
+        let extended = crate::model::market::yahoo_session::extended_candles(
+            DataSource::Yahoo,
+            symbol,
+            timeframe,
+        );
+        self.fetch_klines_with_session(symbol, timeframe, limit, extended)
     }
 
     fn fetch_klines_range(
@@ -247,7 +286,12 @@ impl MarketSource for Yahoo {
         end_ms: i64,
         max: usize,
     ) -> Result<Vec<Kline>, ProviderError> {
-        fetch_range(symbol, timeframe, start_ms, end_ms, max, crate::clock::now_ms())
+        let extended = crate::model::market::yahoo_session::extended_candles(
+            DataSource::Yahoo,
+            symbol,
+            timeframe,
+        );
+        self.fetch_klines_range_with_session(symbol, timeframe, start_ms, end_ms, max, extended)
     }
 
     fn search_tickers(&self, query: &str) -> Result<Vec<SearchResult>, ProviderError> {
@@ -316,6 +360,11 @@ mod tests {
         chart.meta.current_trading_period = Some(serde_json::json!({
             "regular": {"start": 60, "end": 120}
         }));
+        let extended = native_bars_with_session(chart.clone(), Timeframe::MINUTE_1, true).unwrap();
+        assert_eq!(extended.len(), 2);
+        assert_eq!(extended[0].close, 10.0);
+        assert_eq!(extended[1].close, 11.0);
+
         let result = native_bars(chart, Timeframe::MINUTE_1).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].close, 11.0);
@@ -347,7 +396,7 @@ mod tests {
             bar(480, 99.0, Some(900.0)),
             bar(540, 100.0, Some(900.0)),
         ]);
-        let result = shape_range(chart, plan, 300_000, 300_000, 480_000, 1).unwrap();
+        let result = shape_range(chart, plan, 300_000, 300_000, 480_000, 1, false).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].close, 12.0);
         assert_eq!(result[0].volume, 450.0);

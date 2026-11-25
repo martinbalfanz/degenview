@@ -76,6 +76,7 @@ impl DegenViewApp {
     pub(super) fn tick_pine(&mut self) {
         let store = lock(&self.store);
         let now = now_ms();
+        let policy = crate::model::market::yahoo_session::snapshot();
         let mut fired = Vec::new();
         let mut datasets = std::collections::HashMap::new();
         for tab in self.tabs.slots() {
@@ -108,7 +109,7 @@ impl DegenViewApp {
                 }
             }
         }
-        if !fired.is_empty() {
+        if !fired.is_empty() && crate::model::market::yahoo_session::snapshot() == policy {
             self.alerts.dispatch_pine(&fired, &store, &self.store, now);
         }
     }

@@ -129,7 +129,11 @@ impl ChartWorkspace {
         Some(ChartData {
             instrument: InstrumentId::new(chart.source, &chart.symbol),
             chart_type: chart.chart.effective_chart_type(chart.source),
-            candles: displayed_candles(&chart.candles, replay_ms),
+            candles: if chart.yahoo_session_is_current(self.timeframe) {
+                displayed_candles(&chart.candles, replay_ms)
+            } else {
+                &[]
+            },
             replay_ms,
             drawings: &chart.drawings,
             next_drawing_id: chart.next_drawing_id,

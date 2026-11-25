@@ -443,10 +443,9 @@ impl ChartCard {
         scale: &PriceScale,
         price: f64,
         last: Option<&Kline>,
-        style: &CanvasStyle,
     ) {
         let y = scale.y(price);
-        if !y.is_finite() || !plot.y_range().contains(y) || plot.width() < 140.0 || plot.height() < 18.0 {
+        if !y.is_finite() || !plot.y_range().contains(y) {
             return;
         }
         let tint = theme::text_secondary();
@@ -458,16 +457,6 @@ impl ChartCard {
                 4.0,
             ));
         }
-        let value = scale.tag_label(self.appearance.price_format(), price);
-        let label = crate::i18n::tr!("Yahoo quote {price} (may be delayed)", price = value);
-        let label_y = (y - 9.0).clamp(plot.top() + 9.0, plot.bottom() - 9.0);
-        painter.text(
-            Pos2::new(plot.right() - 6.0, label_y),
-            Align2::RIGHT_CENTER,
-            label,
-            style.price_font(),
-            tint,
-        );
     }
 
     /// A bar's time as the chart writes it: to the second on a candle shorter than a minute.

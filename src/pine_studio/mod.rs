@@ -466,7 +466,18 @@ impl PineStudio {
         std::mem::take(&mut self.actions)
     }
 
+    pub(crate) fn sync_yahoo_session(&mut self) -> bool {
+        if !self.preview.sync_session(crate::model::market::yahoo_session::snapshot()) {
+            return false;
+        }
+        self.debug.invalidate_session_policy();
+        self.profiler.script_changed();
+        self.profiler_now = None;
+        true
+    }
+
     fn begin_frame(&mut self, ctx: &egui::Context) {
+        self.sync_yahoo_session();
         let now = Instant::now();
         let mut scanned = false;
         if !self.loaded {

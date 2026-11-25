@@ -256,7 +256,12 @@ impl SettingsHost {
                 }
                 SettingsAction::SetYahooExtendedHours(enabled) => {
                     self.state.yahoo_status = Some(match store.set_setting(crate::model::market::yahoo_session::SETTINGS_KEY, &enabled) {
-                        Ok(()) => StatusMessage::ok(tr!("Yahoo preference saved.")),
+                        Ok(()) => {
+                            crate::model::market::yahoo_session::apply_saved(enabled);
+                            ctx.request_repaint_of(egui::ViewportId::ROOT);
+                            ctx.request_repaint();
+                            StatusMessage::ok(tr!("Yahoo preference saved."))
+                        },
                         Err(error) => StatusMessage::error(tr!("Could not save the settings: {error}", error = error)),
                     });
                 }

@@ -318,6 +318,7 @@ pub(super) struct TabState {
     broker_revision: u64,
     /// The interface language's revision they were last repainted for.
     language_revision: u64,
+    yahoo_session_revision: u64,
 }
 
 impl TabState {
@@ -354,6 +355,7 @@ impl TabState {
             title_revision: 0,
             broker_revision: 0,
             language_revision: 0,
+            yahoo_session_revision: 0,
         }
     }
 
@@ -486,6 +488,25 @@ impl TabState {
     pub(super) fn repaint_windows(&self, ctx: &egui::Context) {
         for (window, _) in self.shared.windows.snapshot() {
             ctx.request_repaint_of(TabWindowHost::viewport_id(window.id));
+        }
+    }
+
+    /// Synchronize session-dependent data before background consumers read it.
+    pub(super) fn tick_yahoo_sessions(&mut self, ctx: &egui::Context) {
+        let revision = crate::model::market::yahoo_session::snapshot().revision;
+        let mut changed = revision != self.yahoo_session_revision;
+        for slot in &self.slots {
+            if let Ok(mut content) = slot.content.lock() {
+                match &mut *content {
+                    TabContent::Chart(workspace) => changed |= workspace.sync_yahoo_session(ctx),
+                    TabContent::Pine(studio) => changed |= studio.sync_yahoo_session(),
+                    TabContent::Portfolio(_) => {}
+                }
+            }
+        }
+        self.yahoo_session_revision = revision;
+        if changed {
+            self.repaint_windows(ctx);
         }
     }
 

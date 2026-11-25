@@ -26,7 +26,7 @@ pub const SIDEBAR_WIDTH: f32 = 224.0;
 /// The Settings window: the sidebar and a 616-point page.
 pub const WINDOW_SIZE: Vec2 = Vec2::new(840.0, 600.0);
 /// The smallest the window can be made: tall enough for every sidebar row.
-pub const MIN_SIZE: Vec2 = Vec2::new(520.0, 480.0);
+pub const MIN_SIZE: Vec2 = Vec2::new(520.0, 500.0);
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum SettingsSection {
@@ -815,7 +815,7 @@ fn section_yahoo(
             ui,
             Icon::ChartLine,
             tr!("Extended hours"),
-            Some(tr!("Include US stock and ETF premarket and after-hours data on intraday charts. Restart DegenView to apply.")),
+            Some(tr!("Include US stock and ETF premarket and after-hours data on intraday charts and watchlist quotes. Changes apply without restarting.")),
             |ui| {
                 if card::switch(ui, &mut enabled) {
                     actions.push(SettingsAction::SetYahooExtendedHours(enabled));
@@ -831,9 +831,6 @@ fn section_yahoo(
             },
             kit::size::BODY, kit::REGULAR, theme::text_secondary(),
         ));
-        if saved != yahoo_session::extended_enabled() && !yahoo_session::overridden_by_environment() {
-            ui.label(kit::text(tr!("Restart required to apply the saved setting."), kit::size::BODY, kit::REGULAR, theme::text_secondary()));
-        }
         if let Some(status) = status {
             status_message(ui, &status.text(), status.is_error);
         }

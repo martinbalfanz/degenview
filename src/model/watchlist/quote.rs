@@ -173,14 +173,7 @@ impl WatchlistQuote {
                 quote.timestamp_ms.or(Some(received_at_ms))
             },
             freshness: evaluate_freshness(source, received_at_ms, received_at_ms),
-            note: (source == DataSource::Yahoo)
-                .then(|| {
-                    if crate::model::market::yahoo_session::extended_enabled() {
-                        tr!("Yahoo quote may include extended hours and be delayed").to_owned()
-                    } else {
-                        tr!("Yahoo prices may be delayed").to_owned()
-                    }
-                }),
+            note: None,
         }
     }
 }
@@ -594,6 +587,7 @@ mod yahoo_tests {
             now,
         );
         assert_eq!(quote.freshness, Freshness::Delayed);
+        assert!(quote.note.is_none(), "the freshness tile conveys the delay status");
         assert!(quote.freshness.is_recent());
         assert!(!quote.freshness.is_current());
         assert_eq!(quote.timestamp_ms, Some(now - 900_000));

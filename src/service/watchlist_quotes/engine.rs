@@ -14,6 +14,7 @@ use super::quote_stream::StreamTick;
 use crate::i18n::tr;
 use crate::lock::lock;
 use crate::model::alert::AlertProviderHealth;
+use crate::model::market::yahoo_session::{self, PolicySnapshot, Session};
 use crate::model::watchlist::quote::{
     Freshness, SourceQuote, WatchlistQuote, evaluate_freshness, refresh_interval_secs,
 };
@@ -160,6 +161,8 @@ pub struct Engine {
     // Successful metadata-validated regular-session REST snapshots, kept
     // independently of the indicative stream and its change reference.
     yahoo_rest: HashMap<String, SourceQuote>,
+    yahoo_rest_received: HashMap<String, i64>,
+    yahoo_policy: PolicySnapshot,
     /// When each price was last confirmed by its provider; what freshness is judged by.
     received: HashMap<String, i64>,
     sources: HashMap<DataSource, SourceState>,
@@ -186,6 +189,8 @@ impl Engine {
             consumers: HashMap::new(),
             known: HashMap::new(),
             yahoo_rest: HashMap::new(),
+            yahoo_rest_received: HashMap::new(),
+            yahoo_policy: PolicySnapshot::default(),
             received: HashMap::new(),
             sources: HashMap::new(),
             rejected: HashMap::new(),
@@ -432,6 +437,7 @@ impl Engine {
             self.idle_since.remove(key);
             self.known.remove(key);
             self.yahoo_rest.remove(key);
+            self.yahoo_rest_received.remove(key);
             self.received.remove(key);
             self.rejected.remove(key);
             self.stream_subscribed_at.remove(key);
@@ -577,6 +583,7 @@ impl Engine {
     // MARK: Applying results
 
     pub fn apply(&mut self, planned: &Planned, outcome: &Outcome, now: i64) {
+        self.sync_yahoo_session(now, yahoo_session::snapshot());
         let source = planned.source;
         let mut state = self.sources.get(&source).cloned().unwrap_or_default();
         let mut updates: HashMap<String, WatchlistQuote> = HashMap::new();
@@ -624,6 +631,7 @@ impl Engine {
                         && self.yahoo_rest.get(key).is_none_or(|previous| quote.timestamp_ms >= previous.timestamp_ms)
                     {
                         self.yahoo_rest.insert(key.clone(), *quote);
+                        self.yahoo_rest_received.insert(key.clone(), now);
                     }
                     // A slow snapshot must not rewind a more recent stream tick.
                     if let Some(last) = self.known.get(key)
@@ -662,6 +670,7 @@ impl Engine {
                 );
             } else if source_answered && outcome.rejected.contains(&request.symbol) {
                 self.yahoo_rest.remove(key);
+                self.yahoo_rest_received.remove(key);
                 self.rejected
                     .insert(key.clone(), now + self.config.rejected_retry_ms);
                 updates.insert(
@@ -758,11 +767,51 @@ impl Engine {
             .find(|source| source.watchlist_slug() == slug)
     }
 
+    /// Rebase the indicative Yahoo quote to the independently validated REST
+    /// snapshot, including its original receipt time. A revision change also
+    /// catches a round trip while the coordinator was waiting on HTTP.
+    pub(super) fn sync_yahoo_session(&mut self, now: i64, policy: PolicySnapshot) {
+        if self.yahoo_policy == policy {
+            return;
+        }
+        self.yahoo_policy = policy;
+        let keys: Vec<_> = self.known.keys().filter(|key| {
+            key.split_once(':').is_some_and(|(source, symbol)| {
+                source == DataSource::Yahoo.watchlist_slug()
+                    && DataSource::Yahoo.yahoo_stream_symbol(symbol)
+            })
+        }).cloned().collect();
+        let mut updates = HashMap::new();
+        for key in keys {
+            let quote = if let Some((rest, received)) = self.yahoo_rest.get(&key)
+                .zip(self.yahoo_rest_received.get(&key))
+            {
+                self.received.insert(key.clone(), *received);
+                WatchlistQuote::from_source(DataSource::Yahoo, rest, *received)
+                    .with_freshness(evaluate_freshness(DataSource::Yahoo, *received, now))
+            } else {
+                self.received.remove(&key);
+                WatchlistQuote::default()
+            };
+            self.known.insert(key.clone(), quote.clone());
+            updates.insert(key, quote);
+        }
+        self.book.apply_yahoo_session(updates, policy.revision);
+        // Ask again when permitted, without overriding rate-limit backoff.
+        self.sources.entry(DataSource::Yahoo).or_default().last_poll_ms = i64::MIN / 2;
+    }
+
     // MARK: Ticks
 
     /// Publishes the latest tick of each product; the coordinator drains its channel on a
     /// short interval, so a busy feed becomes a few updates a second.
+    #[cfg(test)]
     pub fn receive_ticks(&mut self, ticks: Vec<StreamTick>, now: i64) {
+        self.receive_ticks_with_policy(ticks, now, yahoo_session::snapshot());
+    }
+
+    pub(super) fn receive_ticks_with_policy(&mut self, ticks: Vec<StreamTick>, now: i64, policy: PolicySnapshot) {
+        self.sync_yahoo_session(now, policy);
         let mut latest: HashMap<String, WatchlistQuote> = HashMap::new();
         let mut heard: HashSet<DataSource> = HashSet::new();
         for tick in ticks {
@@ -774,6 +823,14 @@ impl Engine {
                 continue;
             };
             if tick.source == DataSource::Yahoo {
+                // Recheck at consumption, not only at decoding: an extended
+                // message may already be queued when regular mode is selected.
+                let session = tick.quote.timestamp_ms.and_then(yahoo_session::session_at);
+                if !matches!(session, Some(Session::Regular))
+                    && !(policy.extended && matches!(session, Some(Session::Pre | Session::Post)))
+                {
+                    continue;
+                }
                 // REST must first establish the market; socket payloads alone
                 // cannot verify all the currency and exchange metadata.
                 let previous = latest.get(key).or_else(|| self.known.get(key));
@@ -894,6 +951,41 @@ fn yahoo_tick(previous: &WatchlistQuote, rest: &SourceQuote, mut tick: SourceQuo
 #[cfg(test)]
 mod yahoo_stream_tests {
     use super::*;
+    #[test]
+    fn yahoo_session_transition_restores_baseline_and_rejects_extended_ticks() {
+        let book = WatchlistQuoteBook::default();
+        let mut engine = Engine::new(book, Config::default());
+        let instrument = InstrumentId::new(DataSource::Yahoo, "NVDA");
+        let key = instrument.key();
+        let pre = 1795607849000;
+        let close = crate::pine::time::calendar::make(2026, 11, 24, 21, 0, 0, 0).unwrap();
+        let rest = SourceQuote {
+            price: 140.0, previous_day_price: Some(130.0),
+            timestamp_ms: Some(close), volume_24h: Some(10_000.0),
+            ..SourceQuote::default()
+        };
+        engine.update(1, vec![instrument], true, pre);
+        engine.yahoo_rest.insert(key.clone(), rest);
+        engine.yahoo_rest_received.insert(key.clone(), pre - 180_000);
+        engine.known.insert(key.clone(), WatchlistQuote::from_source(DataSource::Yahoo, &rest, pre));
+        let tick = StreamTick {
+            source: DataSource::Yahoo, product_id: "NVDA".into(),
+            quote: SourceQuote { price: 147.5, timestamp_ms: Some(pre), ..SourceQuote::default() },
+        };
+        let extended = PolicySnapshot { extended: true, revision: 1 };
+        engine.receive_ticks_with_policy(vec![tick.clone()], pre, extended);
+        assert_eq!(engine.known[&key].last, Some(147.5));
+        assert_eq!(engine.known[&key].volume, None);
+        let regular = PolicySnapshot { extended: false, revision: 2 };
+        engine.receive_ticks_with_policy(vec![tick], pre + 1, regular);
+        let restored = &engine.known[&key];
+        assert_eq!(restored.last, Some(140.0));
+        assert_eq!(restored.change, Some(10.0));
+        assert_eq!(restored.volume, Some(10_000.0));
+        assert_eq!(restored.freshness, Freshness::Stale);
+        assert_eq!(engine.received[&key], pre - 180_000);
+    }
+
     #[test]
     fn sparse_tick_uses_rest_reference_and_never_rewinds() {
         let day = crate::pine::time::calendar::make(2026, 11, 25, 15, 0, 0, 0).unwrap();

@@ -208,14 +208,31 @@ pub fn fetch_klines(
     timeframe: Timeframe,
     limit: u32,
 ) -> Result<Vec<Kline>, ProviderError> {
+    let extended = crate::model::market::yahoo_session::extended_candles(source, symbol, timeframe);
+    fetch_klines_with_session(source, symbol, timeframe, limit, extended)
+}
+
+/// The caller's captured Yahoo session mode is used for both the cache identity
+/// and every provider request, including tail refreshes and full-fetch fallback.
+pub(crate) fn fetch_klines_with_session(
+    source: DataSource,
+    symbol: &str,
+    timeframe: Timeframe,
+    limit: u32,
+    extended: bool,
+) -> Result<Vec<Kline>, ProviderError> {
+    let extended = extended && source.yahoo_stream_symbol(symbol) && timeframe.is_intraday();
     let provider = for_source(source);
     let fetch = |limit: u32| {
-        provider
-            .fetch_klines(symbol, timeframe, limit)
-            .map(normalize)
+        if source == DataSource::Yahoo {
+            market::yahoo::YAHOO.fetch_klines_with_session(symbol, timeframe, limit, extended)
+        } else {
+            provider.fetch_klines(symbol, timeframe, limit)
+        }
+        .map(normalize)
     };
     match cache::policy(source, timeframe) {
-        Some(policy) => cache::fetch(source, symbol, timeframe, limit, policy, fetch),
+        Some(policy) => cache::fetch(source, symbol, timeframe, limit, policy, extended, fetch),
         None => fetch(limit),
     }
 }
@@ -244,18 +261,26 @@ impl From<Vec<Kline>> for LiveCandles {
 /// from finer candles, one more small request for those candles of the newest bucket (one bucket's
 /// worth, after the folded answer). A failed second request leaves `bars` empty: the candles are
 /// still good.
-pub fn fetch_klines_live(
+pub(crate) fn fetch_klines_live_with_session(
     source: DataSource,
     symbol: &str,
     timeframe: Timeframe,
     limit: u32,
+    extended: bool,
 ) -> Result<LiveCandles, ProviderError> {
-    let candles = fetch_klines(source, symbol, timeframe, limit)?;
+    let candles = fetch_klines_with_session(source, symbol, timeframe, limit, extended)?;
     let bars = source
         .plan(timeframe)
         .filter(|plan| !plan.is_native() && DataSource::CANDLE_STREAMS.contains(&source))
         .and_then(|plan| {
-            let base = fetch_klines(source, symbol, plan.base(), plan.per_target() as u32).ok()?;
+            let base = fetch_klines_with_session(
+                source,
+                symbol,
+                plan.base(),
+                plan.per_target() as u32,
+                extended,
+            )
+            .ok()?;
             Some(plan.newest_bucket(&base))
         })
         .unwrap_or_default();
@@ -271,9 +296,28 @@ pub fn fetch_klines_range(
     end_ms: i64,
     max: usize,
 ) -> Result<Vec<Kline>, ProviderError> {
-    for_source(source)
-        .fetch_klines_range(symbol, timeframe, start_ms, end_ms, max)
-        .map(normalize)
+    let extended = crate::model::market::yahoo_session::extended_candles(source, symbol, timeframe);
+    fetch_klines_range_with_session(source, symbol, timeframe, start_ms, end_ms, max, extended)
+}
+
+pub(crate) fn fetch_klines_range_with_session(
+    source: DataSource,
+    symbol: &str,
+    timeframe: Timeframe,
+    start_ms: i64,
+    end_ms: i64,
+    max: usize,
+    extended: bool,
+) -> Result<Vec<Kline>, ProviderError> {
+    let extended = extended && source.yahoo_stream_symbol(symbol) && timeframe.is_intraday();
+    if source == DataSource::Yahoo {
+        market::yahoo::YAHOO.fetch_klines_range_with_session(
+            symbol, timeframe, start_ms, end_ms, max, extended,
+        )
+    } else {
+        for_source(source).fetch_klines_range(symbol, timeframe, start_ms, end_ms, max)
+    }
+    .map(normalize)
 }
 
 /// How many choices of an event are fetched at once.

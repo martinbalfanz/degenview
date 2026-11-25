@@ -221,3 +221,21 @@ fn percent_uses_a_real_minus() {
     assert_eq!(signed_percent(1.5), "+1.50%");
     assert_eq!(signed_percent(-0.25), "−0.25%");
 }
+
+#[test]
+fn yahoo_preview_session_change_clears_history_and_changes_run_identity() {
+    use crate::model::market::yahoo_session::PolicySnapshot;
+    let mut preview = state();
+    preview.select_market(PreviewMarket { ticker: "STUDIOSESS".into(), source: DataSource::Yahoo });
+    preview.select_timeframe(Timeframe::HOUR_1);
+    preview.set_candles_for_test(vec![Kline {
+        open_time: 0, close_time: 3_599_999, open: 100.0, high: 101.0,
+        low: 99.0, close: 100.0, volume: 10.0,
+    }]);
+    let before = preview.run_identity("plot(close)", 4_000_000, false);
+    let policy = PolicySnapshot { extended: false, revision: 2 };
+    assert!(preview.sync_session(policy));
+    assert!(preview.candles.is_empty());
+    assert_ne!(before, preview.run_identity("plot(close)", 4_000_000, false));
+    assert!(!preview.sync_session(policy));
+}
