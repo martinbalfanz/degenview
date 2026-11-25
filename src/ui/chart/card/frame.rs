@@ -46,6 +46,8 @@ pub(super) struct FrameData<'a> {
     pub constructed: Option<&'a ConstructedSeries>,
     pub outputs: &'a [Placed],
     pub indicators: &'a IndicatorConfig,
+    /// Render-only, absent from replay and snapshots.
+    pub preview: Option<crate::model::market::yahoo_preview::Preview>,
 }
 
 impl FrameData<'_> {
@@ -251,12 +253,13 @@ impl ChartCard {
                     .x
             };
             let mut widest = 0.0f32;
-            if let Some(view) = self.view(
+            if let Some(view) = self.view_with_preview(
                 framing,
                 bars,
                 (provisional, top_inset),
                 scale_mode,
                 chart_type,
+                data.preview,
             ) {
                 let scale = &view.scale;
                 let budget =
@@ -271,7 +274,8 @@ impl ChartCard {
                 let tagged = [scale.minimum, scale.maximum]
                     .into_iter()
                     .chain(bars.last().map(|bar| bar.close))
-                    .chain(candles.last().map(|bar| bar.close));
+                    .chain(candles.last().map(|bar| bar.close))
+                    .chain(data.preview.map(|bar| bar.close));
                 for price in tagged {
                     widest = widest.max(measure(&scale.tag_label(format, price)));
                 }
@@ -343,16 +347,24 @@ impl ChartCard {
         let shown = &bars[view.start..view.end];
         // Only the series painter and the last-price tag see this copy.
         // Indicators, volume, projections, Pine, replay and snapshots keep REST data.
-        let preview = self.yahoo_preview.filter(|preview| {
-            decor.indicative_quote && !decor.replay_active
-                && data.source.yahoo_stream_symbol(data.symbol)
-                && chart_type == ChartType::Candles
-                && view.end == bars.len()
-                && shown.last().is_some_and(|last| last.open_time == preview.open_time)
-        });
-        let painted = preview.map(|preview| {
+        let preview = data.preview.and_then(|preview| {
+            view.preview_index(bars, plot, preview).map(|index| (preview, index))
+        }).filter(|_| decor.indicative_quote && !decor.replay_active);
+        let painted = preview.map(|(preview, index)| {
             let mut painted = shown.to_vec();
-            if let Some(last) = painted.last_mut() {
+            if index == shown.len() {
+                // A paint-only carrier for the existing candle renderer. Its
+                // zero volume is never passed to volume/readout/data consumers.
+                painted.push(Kline {
+                    open_time: preview.open_time,
+                    close_time: preview.open_time,
+                    open: preview.open,
+                    high: preview.high,
+                    low: preview.low,
+                    close: preview.close,
+                    volume: 0.0,
+                });
+            } else if let Some(last) = painted.last_mut() {
                 preview.apply_to(last);
             }
             painted
@@ -471,6 +483,9 @@ impl ChartCard {
             // The first script that recolours a bar wins it, in the order the scripts were
             // applied.
             let recolour = |index: usize| {
+                if index >= shown.len() {
+                    return None;
+                }
                 layout
                     .bar_color_outputs
                     .iter()
@@ -494,8 +509,8 @@ impl ChartCard {
                 recolor: bar_color,
                 price_format: self.appearance.price_format(),
             });
-            if let Some(preview) = preview {
-                self.draw_yahoo_preview_border(&clipped, plot, scale, x_for(shown.len() - 1), slot_width, preview);
+            if let Some((preview, index)) = preview {
+                self.draw_yahoo_preview_border(&clipped, plot, scale, x_for(index), slot_width, preview);
             }
         }
 
@@ -537,13 +552,15 @@ impl ChartCard {
                 target_at(&targets, pointer).cloned()
             });
 
-        let tag_candles = preview.map(|preview| {
-            // The tag needs only the last two candles, including previous close for its colour.
+        let tag_candles = preview.and_then(|(_, index)| {
+            let bar = painted.as_ref()?.get(index)?;
             let mut tail = candles[candles.len().saturating_sub(2)..].to_vec();
-            if let Some(last) = tail.last_mut() {
-                preview.apply_to(last);
+            if index == shown.len() {
+                tail.push(bar.clone());
+            } else if let Some(last) = tail.last_mut() {
+                *last = bar.clone();
             }
-            tail
+            Some(tail)
         });
         self.draw_last_price(
             &main_painter,
@@ -564,7 +581,7 @@ impl ChartCard {
                 self.draw_yahoo_quote(&clipped, plot, scale, price, candles.last());
             }
         }
-        let main_tag_y = preview.map(|bar| scale.y(bar.close)).or_else(|| candles.last().map(|last| scale.y(last.close)));
+        let main_tag_y = preview.map(|(bar, _)| scale.y(bar.close)).or_else(|| candles.last().map(|last| scale.y(last.close)));
         self.paint_overlay_tags(
             &main_painter,
             &clipped,
@@ -720,6 +737,12 @@ impl ChartCard {
                         .collect(),
                 },
             );
+            if let Some((preview, index)) = preview
+                && index == shown.len()
+                && ((x - plot.left()) / slot_width - lead).floor() == index as f32
+            {
+                self.draw_yahoo_preview_hover(painter, plot, rect, x, style, preview, crosshair.frozen, main_visible);
+            }
         }
 
         if let Some(crosshair) = decor.crosshair.filter(|_| main_visible) {

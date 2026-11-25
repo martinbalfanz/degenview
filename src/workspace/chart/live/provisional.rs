@@ -31,8 +31,13 @@ impl Provisional {
         // authoritative correction, so discard old sampled extrema and do not
         // reapply the last seen quote. Unchanged cached bars are not corrections.
         if self.rest.as_ref().is_none_or(|(old_tf, old)| *old_tf != tf || old != last) {
-            if self.rest.as_ref().is_some_and(|(old_tf, old)| *old_tf == tf && old.open_time == last.open_time) {
-                self.sampled = None;
+            if self.rest.as_ref().is_some_and(|(old_tf, old)| *old_tf == tf && old.open_time <= last.open_time) {
+                // A correction to the preceding bar does not invalidate samples
+                // of a still-unconfirmed next bucket. Once REST reaches that
+                // bucket, discard its samples but keep the duplicate guard.
+                if self.sampled.is_some_and(|(_, sample, _)| sample.open_time <= last.open_time) {
+                    self.sampled = None;
+                }
             } else {
                 self.clear();
             }
@@ -42,12 +47,15 @@ impl Provisional {
             self.sampled = None;
             return None;
         };
-        // Only the already-existing, forming REST candle is eligible. Do
-        // not append a synthetic bar or imply that missing intervals traded.
+        let bucket = bucket_start_ms(tf, quote.timestamp_ms);
+        let next = next_bucket_start_ms(tf, last.open_time);
+        // Only an observed, contiguous next bucket can occupy the existing
+        // future slot on the UTC grid. Never bridge gaps or fabricate bars.
+        let contiguous = bucket == next
+            && last.close_time.checked_add(1) == Some(next)
+            && next_bucket_start_ms(tf, next) - next == next - last.open_time;
         if !tf.is_intraday() || !quote.price.is_finite() || quote.price <= 0.0
-            || quote.timestamp_ms < last.open_time
-            || quote.timestamp_ms >= next_bucket_start_ms(tf, last.open_time)
-            || bucket_start_ms(tf, quote.timestamp_ms) != last.open_time
+            || (bucket != last.open_time && !contiguous)
         {
             self.sampled = None;
             return None;
@@ -60,19 +68,23 @@ impl Provisional {
             }
         }
         let mut sampled = match self.sampled {
-            Some((old_tf, sample, ts)) if old_tf == tf && sample.open_time == last.open_time => {
+            Some((old_tf, sample, ts)) if old_tf == tf && sample.open_time == bucket => {
                 if quote.timestamp_ms < ts {
                     return None;
                 }
                 sample
             }
-            _ => Preview { open_time: last.open_time, open: quote.price, high: quote.price, low: quote.price, close: quote.price },
+            _ => Preview { open_time: bucket, open: quote.price, high: quote.price, low: quote.price, close: quote.price },
         };
         sampled.high = sampled.high.max(quote.price);
         sampled.low = sampled.low.min(quote.price);
         sampled.close = quote.price;
         self.observed_through = Some(quote.timestamp_ms);
         self.sampled = Some((tf, sampled, quote.timestamp_ms));
+        if bucket != last.open_time {
+            // Open is the first observed price, not the official opening trade.
+            return Some(sampled);
+        }
         Some(Preview {
             open_time: last.open_time,
             open: last.open,
@@ -91,6 +103,23 @@ mod tests {
     }
 
     #[test]
+    fn yahoo_next_bucket_uses_observations_only_and_yields_to_rest() {
+        let mut state = Provisional::default();
+        let tf = Timeframe::parse("5m").unwrap();
+        let mut rest = bar(0);
+        let observe = |price, timestamp_ms| Some(Observation { price, timestamp_ms });
+        let first = state.observe(tf, &rest, observe(110.0, 301_000)).unwrap();
+        assert_eq!((first.open, first.high, first.low, first.close), (110.0, 110.0, 110.0, 110.0));
+        rest.close = 100.0;
+        let second = state.observe(tf, &rest, observe(108.0, 302_000)).unwrap();
+        assert_eq!((second.open, second.high, second.low, second.close), (110.0, 110.0, 108.0, 108.0));
+        assert!(state.observe(tf, &bar(300_000), observe(108.0, 302_000)).is_none());
+        let newer = state.observe(tf, &bar(300_000), observe(103.0, 303_000)).unwrap();
+        assert_eq!((newer.open, newer.high, newer.low, newer.close), (100.0, 103.0, 98.0, 103.0));
+        assert!(state.observe(tf, &bar(300_000), observe(200.0, 900_000)).is_none());
+    }
+
+    #[test]
     fn preview_tracks_sampled_extremes_without_mutating_rest() {
         let mut state = Provisional::default();
         let tf = Timeframe::parse("5m").unwrap();
@@ -103,7 +132,8 @@ mod tests {
         assert_eq!(rest.volume, 1234.0);
         assert_eq!(rest.close, 101.0);
         assert!(state.observe(tf, &rest, observe(200.0, 1500)).is_none());
-        assert!(state.observe(tf, &rest, observe(104.0, 300_000)).is_none());
+        let next = state.observe(tf, &rest, observe(104.0, 300_000)).unwrap();
+        assert_eq!((next.open_time, next.open, next.close), (300_000, 104.0, 104.0));
         let fresh = state.observe(tf, &bar(300_000), observe(101.0, 301_000)).unwrap();
         assert_eq!((fresh.high, fresh.low), (102.0, 98.0));
         assert!(state.observe(tf, &bar(300_000), None).is_none());

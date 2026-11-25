@@ -10,6 +10,11 @@ pub struct Preview {
 }
 
 impl Preview {
+    /// True only when the existing time axis can place this at the next slot.
+    pub(crate) fn is_next_after(self, last: &crate::model::Kline) -> bool {
+        last.close_time.checked_add(1) == Some(self.open_time)
+    }
+
     /// For a temporary render-only copy of the REST candle. Do not change
     /// timestamps, volume or authoritative history.
     pub(crate) fn apply_to(self, candle: &mut crate::model::Kline) {

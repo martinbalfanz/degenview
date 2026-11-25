@@ -137,6 +137,10 @@ impl ViewGeometry {
 }
 
 impl View {
+    pub(super) fn preview_index(&self, bars: &[Kline], plot: Rect, preview: crate::model::market::yahoo_preview::Preview) -> Option<usize> {
+        preview_index(&bars[self.start..self.end], self.end == bars.len(), plot, self.slot_width, self.lead, preview)
+    }
+
     /// Where this view lies on `plot`.
     pub(super) fn geometry(&self, plot: Rect, total: usize) -> ViewGeometry {
         ViewGeometry {
@@ -175,6 +179,31 @@ impl View {
     }
 }
 
+/// The next preview occupies only already-visible future space; the time
+/// axis remains based on REST and extrapolates this contiguous interval.
+fn preview_index(
+    shown: &[Kline],
+    at_end: bool,
+    plot: Rect,
+    width: f32,
+    lead: f32,
+    preview: crate::model::market::yahoo_preview::Preview,
+) -> Option<usize> {
+    if !at_end {
+        return None;
+    }
+    let last = shown.last()?;
+    let index = if last.open_time == preview.open_time {
+        shown.len() - 1
+    } else if preview.is_next_after(last) {
+        shown.len()
+    } else {
+        return None;
+    };
+    let x = plot.left() + width * (index as f32 + 0.5 + lead);
+    plot.x_range().contains(x).then_some(index)
+}
+
 impl ChartCard {
     /// Tells the card how much of the plot's top the header covers (zero when there is none). The
     /// plot reaches the card's top edge; the price scale starts below the header.
@@ -207,6 +236,18 @@ impl ChartCard {
         mode: PriceScaleMode,
         chart_type: ChartType,
     ) -> Option<View> {
+        self.view_with_preview(framing, candles, (plot, top_inset), mode, chart_type, None)
+    }
+
+    pub(super) fn view_with_preview(
+        &self,
+        framing: Framing,
+        candles: &[Kline],
+        (plot, top_inset): (Rect, f32),
+        mode: PriceScaleMode,
+        chart_type: ChartType,
+        preview: Option<crate::model::market::yahoo_preview::Preview>,
+    ) -> Option<View> {
         let window = self.window(framing, candles.len());
         let (start, end) = (window.start, window.end);
         let shown = &candles[start..end];
@@ -214,6 +255,12 @@ impl ChartCard {
             return None;
         }
         let (mut low, mut high) = self.value_range(shown, chart_type);
+        if let Some(preview) = preview
+            && preview_index(shown, end == candles.len(), plot, self.slot_width(framing, plot), window.lead, preview).is_some()
+        {
+            low = low.min(preview.low);
+            high = high.max(preview.high);
+        }
         if low > high {
             (low, high) = (0.0, 1.0);
         }
@@ -374,4 +421,18 @@ impl ChartCard {
     pub fn reset_price_scale(&mut self) {
         self.viewport.vertical.reset();
     }
+}
+
+#[cfg(test)]
+#[test]
+fn yahoo_preview_slot_requires_contiguous_visible_space() {
+    use crate::model::market::yahoo_preview::Preview;
+    let rest = Kline { open_time: 0, close_time: 299_999, open: 100.0, high: 102.0, low: 98.0, close: 101.0, volume: 100.0 };
+    let preview = Preview { open_time: 300_000, open: 105.0, high: 105.0, low: 105.0, close: 105.0 };
+    let plot = Rect::from_min_size(Pos2::ZERO, Vec2::new(30.0, 100.0));
+    let bars = [rest];
+    assert_eq!(preview_index(&bars, true, plot, 10.0, 0.0, preview), Some(1));
+    assert_eq!(preview_index(&bars, true, plot, 30.0, 0.0, preview), None);
+    assert_eq!(preview_index(&bars, false, plot, 10.0, 0.0, preview), None);
+    assert_eq!(preview_index(&bars, true, plot, 10.0, 0.0, Preview { open_time: 900_000, ..preview }), None);
 }
