@@ -16,7 +16,7 @@ impl ChartCard {
         source: DataSource,
         plot: Rect,
         slots: Slots,
-        bars: &[Kline],
+        axis: TimeAxis<'_>,
     ) -> Option<f32> {
         if crosshair.owner_id == chart_id {
             return Some(plot.left() + plot.width() * crosshair.x_fraction as f32);
@@ -24,7 +24,7 @@ impl ChartCard {
         if !self.takes_part_in_sync(source) {
             return None;
         }
-        let x = slots.x(TimeAxis::new(bars).x_at(crosshair.time?)?);
+        let x = slots.x(axis.x_at(crosshair.time?)?);
         plot.x_range().contains(x).then_some(x)
     }
 
@@ -174,6 +174,43 @@ impl ChartCard {
                     Stroke::new(2.0, theme::text_primary()),
                 );
             }
+        }
+    }
+
+    /// A future slot can carry sampled prices, not an authoritative bar.
+    /// Show its actual bucket time and observed values, without volume or
+    /// indicator readouts (and without inserting it into the time series).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn draw_yahoo_preview_hover(
+        &self,
+        painter: &egui::Painter,
+        plot: Rect,
+        rect: Rect,
+        x: f32,
+        style: &CanvasStyle,
+        preview: crate::model::market::yahoo_preview::Preview,
+        frozen: bool,
+        main_visible: bool,
+    ) {
+        let caps = self.cursor.caps();
+        if caps.axis_tags && !frozen {
+            let tag = Rect::from_center_size(
+                Pos2::new(x, rect.bottom() - style.time_axis_height() / 2.0),
+                Vec2::new(self.time_tag_width(style), style.time_axis_height() - 6.0),
+            ).intersect(Rect::from_min_max(Pos2::new(plot.left(), plot.bottom()), Pos2::new(plot.right(), rect.bottom())));
+            painter.rect_filled(tag, 3.0, Color32::from_gray(79));
+            painter.text(tag.center(), Align2::CENTER_CENTER, self.time_text(preview.open_time), style.time_font(), Color32::WHITE);
+        }
+        if main_visible && style.ohlc_readout && caps.readout {
+            let format = self.appearance.price_format();
+            let values = [
+                (tr!("Provisional").to_owned(), format.format(preview.close)),
+                (tr_c!("readout label", "O").to_owned(), format.format(preview.open)),
+                (tr_c!("readout label", "H").to_owned(), format.format(preview.high)),
+                (tr_c!("readout label", "L").to_owned(), format.format(preview.low)),
+            ];
+            let color = if preview.close >= preview.open { self.bullish_color() } else { self.bearish_color() };
+            paint_ohlc_readout(painter, self.below_header(plot), &values, color);
         }
     }
 

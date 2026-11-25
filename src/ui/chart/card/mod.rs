@@ -278,6 +278,7 @@ pub struct ChartCard {
     title: Option<String>,
     /// An indicative Yahoo price observation, never part of the candle series.
     yahoo_quote: Option<f64>,
+    yahoo_session_levels: crate::model::market::yahoo_preview::SessionLevels,
     yahoo_preview: Option<crate::model::market::yahoo_preview::Preview>,
     /// The choices of a multi-choice prediction market; empty for every other chart.
     series: Vec<SeriesLine>,
@@ -421,6 +422,7 @@ impl Default for ChartCard {
             top_inset: 0.0,
             title: None,
             yahoo_quote: None,
+            yahoo_session_levels: Default::default(),
             yahoo_preview: None,
             series: Vec::new(),
             series_cutoff: None,
@@ -656,6 +658,10 @@ impl ChartCard {
     /// View-only price marker; cannot change chart data, scripts or volume.
     pub fn set_yahoo_preview(&mut self, preview: Option<crate::model::market::yahoo_preview::Preview>) {
         self.yahoo_preview = preview;
+    }
+
+    pub(crate) fn set_yahoo_session_levels(&mut self, levels: crate::model::market::yahoo_preview::SessionLevels) {
+        self.yahoo_session_levels = levels;
     }
 
     pub fn set_yahoo_quote(&mut self, price: Option<f64>) {

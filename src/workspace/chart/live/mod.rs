@@ -51,11 +51,27 @@ impl ChartWorkspace {
 
         let now = crate::clock::now_ms();
         for chart in &mut self.charts {
+            let levels = if active && chart.is_market() && chart.source.yahoo_stream_symbol(&chart.symbol) {
+                let instrument = InstrumentId::new(chart.source, &chart.symbol);
+                crate::model::market::yahoo_preview::SessionLevels::from_quotes(
+                    self.quote_book.get(&instrument).as_ref(),
+                    self.quote_book.get_extended(&instrument).as_ref(),
+                    now,
+                    self.timeframe.is_intraday(),
+                )
+            } else {
+                Default::default()
+            };
+            chart.chart.set_yahoo_session_levels(levels);
             let observation = if active && chart.is_market() && chart.source.yahoo_stream_symbol(&chart.symbol) {
                 chart.candles.last().and_then(|last| {
                     let instrument = InstrumentId::new(chart.source, &chart.symbol);
-                    let quote = self.quote_book.get(&instrument)?;
                     let extended = crate::model::market::yahoo_session::extended_candles(chart.source, &chart.symbol, self.timeframe);
+                    let quote = if extended && matches!(crate::model::market::yahoo_session::session_at(now), Some(crate::model::market::yahoo_session::Session::Pre | crate::model::market::yahoo_session::Session::Post)) {
+                        self.quote_book.get_extended(&instrument)?
+                    } else {
+                        self.quote_book.get(&instrument)?
+                    };
                     let price = indicative_yahoo_price(&quote, last, now, extended)?;
                     Some(Observation { price, timestamp_ms: quote.timestamp_ms? })
                 })
@@ -66,10 +82,18 @@ impl ChartWorkspace {
             let preview = chart.candles.last().and_then(|last| {
                 chart.yahoo_preview.observe(self.timeframe, last, observation)
             });
-            if observation.is_none() {
+            if !active {
                 chart.yahoo_preview.clear();
             }
-            chart.chart.set_yahoo_quote(observation.map(|quote| quote.price));
+            // Do not draw a stale same-bucket price marker after REST has
+            // superseded its preview. Other buckets can still show a quote.
+            let marker = observation.filter(|quote| {
+                preview.is_some() || chart.candles.last().is_some_and(|last| {
+                    !self.timeframe.is_intraday()
+                        || crate::model::market::bucket::bucket_start_ms(self.timeframe, quote.timestamp_ms) != last.open_time
+                })
+            });
+            chart.chart.set_yahoo_quote(marker.map(|quote| quote.price));
             chart.chart.set_yahoo_preview(preview);
         }
     }
@@ -408,6 +432,7 @@ mod tests {
                 candles: vec![fetched],
                 bars: Vec::new(),
                 series: Vec::new(),
+                yahoo_request_started_ms: None,
             }))
             .unwrap();
         chart.inbox = Some(receiver);
@@ -471,6 +496,7 @@ mod tests {
                 }],
                 bars,
                 series: Vec::new(),
+                yahoo_request_started_ms: None,
             }))
             .unwrap();
         chart.inbox = Some(receiver);

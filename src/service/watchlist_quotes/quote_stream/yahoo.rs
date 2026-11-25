@@ -102,7 +102,8 @@ fn decode(mut input: &[u8]) -> Option<Pricing<'_>> {
 }
 
 pub(super) fn parse_tick(text: &str) -> Option<StreamTick> {
-    parse_tick_with_session(text, crate::model::market::yahoo_session::extended_enabled())
+    // The watchlist tracks both sessions independently of chart history.
+    parse_tick_with_session(text, true)
 }
 
 fn payload(text: &str) -> Option<Vec<u8>> {

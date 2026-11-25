@@ -150,6 +150,7 @@ impl ChartWorkspace {
             let lists = store.lists();
             let flags = store.flags();
             let quote = |id: &InstrumentId| self.quote_book.get(id);
+            let extended_quote = |id: &InstrumentId| self.quote_book.get_extended(id);
             let trends = trend::month().snapshot();
             let focused_market = self
                 .resolved_focused_id()
@@ -162,6 +163,7 @@ impl ChartWorkspace {
                 lists,
                 flags,
                 quote: &quote,
+                extended_quote: &extended_quote,
                 trends: &trends,
                 focused_market: focused_market.as_ref(),
                 load_failed: store.load_failed(),

@@ -22,7 +22,6 @@ pub use provider::{QuoteFailure, QuoteRequest};
 
 use crate::clock::now_ms;
 use crate::model::alert::AlertProviderHealth;
-use crate::model::market::yahoo_session;
 use crate::model::{DataSource, InstrumentId};
 use engine::Engine;
 use provider::LiveProvider;
@@ -115,25 +114,15 @@ fn run(
 ) {
     let (sender, receiver): (_, Receiver<StreamTick>) = mpsc::channel();
     let mut sockets: HashMap<DataSource, QuoteSocket> = HashMap::new();
-    // Separate mailbox for Yahoo. Dropping it on a revision change makes
-    // queued ticks from the former socket impossible to publish after a round trip.
-    let mut yahoo_channel = mpsc::channel::<StreamTick>();
-    let mut yahoo_policy = yahoo_session::snapshot();
     let mut last_round = i64::MIN / 2;
     let mut seen_revision = book.revision();
 
     while !shutdown.load(Ordering::Acquire) {
         std::thread::sleep(TICK);
         let now = now_ms();
-        let policy = yahoo_session::snapshot();
-        if policy != yahoo_policy {
-            sockets.remove(&DataSource::Yahoo);
-            yahoo_channel = mpsc::channel();
-            yahoo_policy = policy;
-        }
         let (streams, interval, active, renew) = {
             let mut guard = lock(engine);
-            guard.sync_yahoo_session(now, policy);
+            guard.refresh_yahoo_extended(now);
             guard.expire_leases(now);
             (
                 DataSource::QUOTE_STREAMS.map(|source| (source, guard.stream_products(source))),
@@ -153,21 +142,16 @@ fn run(
                 continue;
             }
             sockets.remove(&source);
-            let ticks = if source == DataSource::Yahoo { &yahoo_channel.0 } else { &sender };
             if !products.is_empty()
-                && let Some(socket) = QuoteSocket::connect(source, products, ticks.clone())
+                && let Some(socket) = QuoteSocket::connect(source, products, sender.clone())
             {
                 sockets.insert(source, socket);
             }
         }
 
-        let mut ticks: Vec<StreamTick> = receiver.try_iter().collect();
-        let yahoo_ticks: Vec<_> = yahoo_channel.1.try_iter().collect();
-        if yahoo_session::snapshot() == yahoo_policy {
-            ticks.extend(yahoo_ticks);
-        }
+        let ticks: Vec<StreamTick> = receiver.try_iter().collect();
         if !ticks.is_empty() {
-            lock(engine).receive_ticks_with_policy(ticks, now, policy);
+            lock(engine).receive_ticks(ticks, now);
         }
 
         if active && now - last_round >= interval {

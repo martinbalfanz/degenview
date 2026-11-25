@@ -178,12 +178,14 @@ impl ChartCard {
         let (bars, plot) = (data.bars, layout.plot);
         replay.picked_ms = None;
         replay.picked_range = None;
-        let view = self.view(
+        let view = self.view_with_preview(
             self.framing(),
             bars,
             (plot, layout.top_inset),
             data.scale_mode,
             data.chart_type,
+            data.preview,
+            data.session_levels,
         );
         let regions = navigation::Regions {
             plot,
@@ -469,6 +471,8 @@ impl ChartCard {
             constructed: constructed.as_deref(),
             outputs: &outputs,
             indicators,
+            preview: self.yahoo_preview.filter(|_| !replay.active && !line && source.yahoo_stream_symbol(symbol) && chart_type == ChartType::Candles),
+            session_levels: if !replay.active && source.yahoo_stream_symbol(symbol) { self.yahoo_session_levels } else { Default::default() },
         };
         let layout = self.frame_layout(
             &data,
@@ -486,12 +490,14 @@ impl ChartCard {
         let chart_hovered = ui.rect_contains_pointer(full_rect);
         let regions = self.handle_frame_input(ui, &response, &data, &layout, drawing, replay);
 
-        let Some(view) = self.view(
+        let Some(view) = self.view_with_preview(
             self.framing(),
             bars,
             (plot, layout.top_inset),
             scale_mode,
             chart_type,
+            data.preview,
+            data.session_levels,
         ) else {
             return pointer;
         };
@@ -587,7 +593,7 @@ impl ChartCard {
             },
             bars.len(),
         );
-        let time = self.takes_part_in_sync(source).then(|| TimeAxis::new(bars));
+        let time = self.takes_part_in_sync(source).then(|| view.hover_axis(bars, plot, data.preview, self.timeframe));
         body::report_hover(&mut pointer, &response, plot, &view, &projection, time);
 
         pointer.clicked = response.clicked();

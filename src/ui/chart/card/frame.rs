@@ -46,6 +46,9 @@ pub(super) struct FrameData<'a> {
     pub constructed: Option<&'a ConstructedSeries>,
     pub outputs: &'a [Placed],
     pub indicators: &'a IndicatorConfig,
+    /// Render-only, absent from replay and snapshots.
+    pub preview: Option<crate::model::market::yahoo_preview::Preview>,
+    pub session_levels: crate::model::market::yahoo_preview::SessionLevels,
 }
 
 impl FrameData<'_> {
@@ -251,12 +254,14 @@ impl ChartCard {
                     .x
             };
             let mut widest = 0.0f32;
-            if let Some(view) = self.view(
+            if let Some(view) = self.view_with_preview(
                 framing,
                 bars,
                 (provisional, top_inset),
                 scale_mode,
                 chart_type,
+                data.preview,
+                data.session_levels,
             ) {
                 let scale = &view.scale;
                 let budget =
@@ -271,7 +276,9 @@ impl ChartCard {
                 let tagged = [scale.minimum, scale.maximum]
                     .into_iter()
                     .chain(bars.last().map(|bar| bar.close))
-                    .chain(candles.last().map(|bar| bar.close));
+                    .chain(candles.last().map(|bar| bar.close))
+                    .chain(data.preview.map(|bar| bar.close))
+                    .chain(data.session_levels.prices());
                 for price in tagged {
                     widest = widest.max(measure(&scale.tag_label(format, price)));
                 }
@@ -341,6 +348,30 @@ impl ChartCard {
         let synthetic_bars = data.synthetic();
         let previous_close = view.start.checked_sub(1).map(|index| bars[index].close);
         let shown = &bars[view.start..view.end];
+        // Only the series painter and the last-price tag see this copy.
+        // Indicators, volume, projections, Pine, replay and snapshots keep REST data.
+        let preview = data.preview.and_then(|preview| {
+            view.preview_index(bars, plot, preview).map(|index| (preview, index))
+        }).filter(|_| decor.indicative_quote && !decor.replay_active);
+        let painted = preview.map(|(preview, index)| {
+            let mut painted = shown.to_vec();
+            if index == shown.len() {
+                // A paint-only carrier for the existing candle renderer. Its
+                // zero volume is never passed to volume/readout/data consumers.
+                painted.push(Kline {
+                    open_time: preview.open_time,
+                    close_time: preview.open_time,
+                    open: preview.open,
+                    high: preview.high,
+                    low: preview.low,
+                    close: preview.close,
+                    volume: 0.0,
+                });
+            } else if let Some(last) = painted.last_mut() {
+                preview.apply_to(last);
+            }
+            painted
+        });
         let shown_synthetic = synthetic_bars.map(|all| &all[view.start..view.end]);
         let (scale, slot_width, lead) = (&view.scale, view.slot_width, view.lead);
         let x_for =
@@ -387,6 +418,17 @@ impl ChartCard {
             .x;
         let ticks = chart::canvas::time_ticks(view.start, shown.len(), slot_width, label_width);
         let tick_xs: Vec<f32> = ticks.iter().map(|index| x_for(*index)).collect();
+        // Session tints sit beneath the grid, candles and script backgrounds.
+        // Do not shade constructed bars or regular-only UTC buckets.
+        if data.constructed.is_none()
+            && let Some(tf) = self.timeframe
+            && crate::model::market::yahoo_session::extended_candles(data.source, data.symbol, tf)
+        {
+            self.draw_yahoo_session_background(
+                &main_painter, plot, shown, slot_width, lead, tf,
+                preview.and_then(|(bar, index)| (index == shown.len()).then_some(bar)),
+            );
+        }
         self.draw_grid(&main_painter, plot, rect, scale, style, &tick_xs);
         canvas::paint_scale_lines(
             painter,
@@ -455,6 +497,9 @@ impl ChartCard {
             // The first script that recolours a bar wins it, in the order the scripts were
             // applied.
             let recolour = |index: usize| {
+                if index >= shown.len() {
+                    return None;
+                }
                 layout
                     .bar_color_outputs
                     .iter()
@@ -465,7 +510,7 @@ impl ChartCard {
             series::paint(&SeriesFrame {
                 painter: &clipped,
                 plot,
-                bars: shown,
+                bars: painted.as_deref().unwrap_or(shown),
                 synthetic: shown_synthetic,
                 box_size: data.constructed.and_then(|built| built.series.size),
                 previous_close,
@@ -478,6 +523,9 @@ impl ChartCard {
                 recolor: bar_color,
                 price_format: self.appearance.price_format(),
             });
+            if let Some((preview, index)) = preview {
+                self.draw_yahoo_preview_border(&clipped, plot, scale, x_for(index), slot_width, preview);
+            }
         }
 
         let drawn_indicators = data.indicators.drawn();
@@ -518,30 +566,47 @@ impl ChartCard {
                 target_at(&targets, pointer).cloned()
             });
 
-        self.draw_last_price(
-            &main_painter,
-            plot,
-            rect,
-            scale,
-            candles,
-            shown_synthetic.and_then(|_| bars.last()),
-            style,
-        );
-        if decor.indicative_quote && !decor.replay_active
-            && data.source == DataSource::Yahoo
+        let tag_candles = preview.and_then(|(_, index)| {
+            let bar = painted.as_ref()?.get(index)?;
+            let mut tail = candles[candles.len().saturating_sub(2)..].to_vec();
+            if index == shown.len() {
+                tail.push(bar.clone());
+            } else if let Some(last) = tail.last_mut() {
+                *last = bar.clone();
+            }
+            Some(tail)
+        });
+        let levels = if decor.indicative_quote && !decor.replay_active && view.end == bars.len() {
+            data.session_levels
+        } else {
+            Default::default()
+        };
+        let regular = levels.regular;
+        let ordinary_price = tag_candles.as_deref().unwrap_or(candles).last().map(|bar| bar.close);
+        let draw_default = regular.is_none() && !levels.extended.is_some_and(|(_, price)| ordinary_price == Some(price));
+        if draw_default {
+            self.draw_last_price(
+                &main_painter,
+                plot,
+                rect,
+                scale,
+                tag_candles.as_deref().unwrap_or(candles),
+                shown_synthetic.and_then(|_| bars.last()),
+                style,
+            );
+        }
+        let main_tag_y = regular.map(|quote| scale.y(quote.price))
+            .or_else(|| preview.map(|(bar, _)| scale.y(bar.close)))
+            .or_else(|| candles.last().map(|last| scale.y(last.close)));
+        if levels.extended.is_none() && regular.is_none()
+            && decor.indicative_quote && !decor.replay_active
             && data.source.yahoo_stream_symbol(data.symbol)
             && view.end == bars.len()
+            && preview.is_none()
             && let Some(price) = self.yahoo_quote
         {
-            if chart_type == ChartType::Candles
-                && let Some(preview) = self.yahoo_preview
-                && candles.last().is_some_and(|last| last.open_time == preview.open_time)
-            {
-                self.draw_yahoo_preview(&clipped, plot, scale, x_for(shown.len() - 1), slot_width, preview);
-            }
             self.draw_yahoo_quote(&clipped, plot, scale, price, candles.last());
         }
-        let main_tag_y = candles.last().map(|last| scale.y(last.close));
         self.paint_overlay_tags(
             &main_painter,
             &clipped,
@@ -552,6 +617,7 @@ impl ChartCard {
             style,
             main_tag_y,
         );
+        self.draw_yahoo_session_levels(&main_painter, plot, rect, scale, style, levels, draw_default.then_some(main_tag_y).flatten());
         self.draw_time_axis(painter, rect, shown, &ticks, &x_for, plot.right(), style);
         // The tags of the lines at a price or a time sit on the axes, which the drawings'
         // clipped painter cannot reach.
@@ -658,7 +724,8 @@ impl ChartCard {
         }
         if let Some((crosshair, x)) = decor.crosshair.and_then(|crosshair| {
             let slots = view.geometry(plot, bars.len()).slots();
-            self.crosshair_column(crosshair, decor.chart_id, data.source, plot, slots, bars)
+            let axis = view.hover_axis(bars, plot, data.preview, self.timeframe);
+            self.crosshair_column(crosshair, decor.chart_id, data.source, plot, slots, axis)
                 .map(|x| (crosshair, x))
         }) {
             self.draw_crosshair(
@@ -697,6 +764,12 @@ impl ChartCard {
                         .collect(),
                 },
             );
+            if let Some((preview, index)) = preview
+                && index == shown.len()
+                && ((x - plot.left()) / slot_width - lead).floor() == index as f32
+            {
+                self.draw_yahoo_preview_hover(painter, plot, rect, x, style, preview, crosshair.frozen, main_visible);
+            }
         }
 
         if let Some(crosshair) = decor.crosshair.filter(|_| main_visible) {
