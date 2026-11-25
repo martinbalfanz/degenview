@@ -82,10 +82,15 @@ impl ChartWorkspace {
             let native_hourly = crate::model::market::yahoo_session::native_hourly(chart.source, &chart.symbol, self.timeframe);
             let preview = chart.candles.last().and_then(|last| {
                 let native_bucket = if native_hourly {
-                    observation.and_then(|quote| crate::service::market::yahoo::current_hour_bucket(
-                        &chart.symbol, quote.timestamp_ms, now, crate::model::market::yahoo_session::extended_candles(chart.source, &chart.symbol, self.timeframe),
-                    ))
-                } else { None };
+                    observation.filter(|quote| quote.timestamp_ms > last.close_time).and_then(|quote| {
+                        crate::service::market::yahoo::current_hour_bucket(
+                            &chart.symbol, quote.timestamp_ms, now,
+                            crate::model::market::yahoo_session::extended_candles(chart.source, &chart.symbol, self.timeframe),
+                        )
+                    })
+                } else {
+                    None
+                };
                 chart.yahoo_preview.observe_with_grid(self.timeframe, last, observation, native_hourly, native_bucket)
             });
             if !active {

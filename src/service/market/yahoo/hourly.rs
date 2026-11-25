@@ -5,11 +5,11 @@ use crate::model::{DataSource, Kline};
 use crate::model::market::yahoo_session::Session;
 use crate::service::ProviderError;
 
-const HOUR: i64 = 3_600;
-
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
+
+const HOUR: i64 = 3_600;
 
 /// Only the current vendor schedule is needed for a live preview. This small
 /// cache does not perform I/O and is never populated by historical paging.
@@ -42,10 +42,8 @@ pub(super) fn remember_current(meta: &ChartMeta, requested_at: i64) {
     if held.get(&key).is_some_and(|entry| entry.requested_at > requested_at) {
         return;
     }
-    if current.is_empty() {
-        held.remove(&key);
-        return;
-    }
+    // Retain an empty newer result as well: a slower earlier request must
+    // not restore a schedule that the latest response did not confirm.
     if held.len() >= MAX_CURRENT && !held.contains_key(&key)
         && let Some(oldest) = held.iter().min_by_key(|(_, entry)| entry.received).map(|(key, _)| key.clone())
     {

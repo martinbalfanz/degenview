@@ -92,7 +92,9 @@ impl Provisional {
             } else if let Some((start, end)) = native_bucket.filter(|(start, end)| *start <= quote.timestamp_ms && quote.timestamp_ms < *end) {
                 (start, end)
             } else {
-                self.sampled = None;
+                // A busy or expired schedule cache hides the preview, but
+                // does not erase a sample that may still be valid once the
+                // identical period is confirmed again.
                 return None;
             }
         } else {
@@ -206,6 +208,7 @@ mod tests {
         let bounds = Some((5_400_000, 7_200_000));
         let first = state.observe_with_grid(Timeframe::HOUR_1, &rest, quote(110.0, 5_400_001), true, bounds).unwrap();
         assert_eq!((first.open_time, first.end_time, first.open), (5_400_000, 7_200_000, 110.0));
+        assert!(state.observe_with_grid(Timeframe::HOUR_1, &rest, quote(110.0, 5_400_001), true, None).is_none());
         let second = state.observe_with_grid(Timeframe::HOUR_1, &rest, quote(108.0, 5_400_002), true, bounds).unwrap();
         assert_eq!((second.open, second.high, second.low, second.close), (110.0, 110.0, 108.0, 108.0));
         let mut next = bar(5_400_000);
