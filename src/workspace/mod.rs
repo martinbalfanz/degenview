@@ -567,13 +567,26 @@ impl ChartWorkspace {
         // Everything below the tab strip: the favorites bar may be moved over all of it.
         let window = ui.max_rect();
         let timeframe = self.timeframe;
+        let extended = crate::model::market::yahoo_session::extended_enabled();
+        let mut session_changed = false;
         for chart in &mut self.charts {
+            if chart.prepare_yahoo_session(timeframe, extended) {
+                chart.fetch_with_session(timeframe, &ctx, extended);
+                session_changed = true;
+                continue;
+            }
             chart.receive_fetch(timeframe);
             chart.receive_older(timeframe);
             chart.request_older(timeframe, &ctx);
             if chart.refresh_due() {
-                chart.fetch(timeframe, &ctx);
+                chart.fetch_with_session(timeframe, &ctx, extended);
             }
+        }
+        if session_changed {
+            self.replay.rebase_on_new_bars();
+            self.drop_rulers();
+            self.link_state.series_changed();
+            self.forget_views(None);
         }
 
         self.tick_link_probation(&ctx);

@@ -50,6 +50,8 @@ pub(super) struct Chart {
     pub(super) older: OlderHistory,
     pub(super) older_inbox: Option<OlderRequest>,
     pub(super) fetch_generation: Arc<AtomicU64>,
+    /// Effective session mode of the candles and any outstanding history requests.
+    yahoo_extended: bool,
     pub(super) chart: ChartCard,
     pub(super) scale_mode: PriceScaleMode,
     pub(super) indicators: IndicatorConfig,
@@ -145,6 +147,7 @@ impl Chart {
             older: OlderHistory::default(),
             older_inbox: None,
             fetch_generation: Arc::new(AtomicU64::new(0)),
+            yahoo_extended: false,
             chart: ChartCard::default(),
             scale_mode: PriceScaleMode::default(),
             indicators: IndicatorConfig::default(),
@@ -341,15 +344,49 @@ impl Chart {
         }
     }
 
+    /// Drop data and answers belonging to the previous effective session mode. The
+    /// viewport, drawings, scripts and comparison configuration belong to the chart,
+    /// not the history, and are preserved.
+    pub(super) fn prepare_yahoo_session(&mut self, timeframe: Timeframe, extended: bool) -> bool {
+        let mode = extended
+            && self.is_market()
+            && self.source.yahoo_stream_symbol(&self.symbol)
+            && timeframe.is_intraday();
+        if self.yahoo_extended == mode {
+            return false;
+        }
+        self.yahoo_extended = mode;
+        self.fetch_generation.fetch_add(1, Ordering::AcqRel);
+        self.inbox = None;
+        self.loading = false;
+        self.error = None;
+        self.candles.clear();
+        self.reset_history();
+        self.forget_live();
+        self.last_paper_quote = None;
+        self.last_data_ms = None;
+        true
+    }
+
     pub(super) fn fetch(&mut self, timeframe: Timeframe, ctx: &egui::Context) {
+        self.fetch_with_session(timeframe, ctx, market::yahoo_session::extended_enabled());
+    }
+
+    pub(super) fn fetch_with_session(
+        &mut self,
+        timeframe: Timeframe,
+        ctx: &egui::Context,
+        extended: bool,
+    ) {
         if !self.is_market() {
             return;
         }
+        self.prepare_yahoo_session(timeframe, extended);
         let (sender, receiver) = mpsc::channel();
         let symbol = self.symbol.clone();
         let source = self.source;
         let choices = self.pm_series.clone();
-        let extended = market::yahoo_session::extended_candles(source, &symbol, timeframe);
+        let extended = self.yahoo_extended;
         let repaint = ctx.clone();
 
         let generation = self.fetch_generation.fetch_add(1, Ordering::AcqRel) + 1;
@@ -463,7 +500,7 @@ impl Chart {
         let (source, symbol) = (self.source, self.symbol.clone());
         let repaint = ctx.clone();
         let asked = symbol.clone();
-        let extended = market::yahoo_session::extended_candles(source, &symbol, timeframe);
+        let extended = self.yahoo_extended;
         service::work_queue::submit_for(source, move || {
             let page = service::fetch_klines_range_with_session(
                 source,
@@ -589,6 +626,60 @@ mod tests {
             timeframe: Timeframe::HOUR_1,
         });
         chart
+    }
+
+    #[test]
+    fn yahoo_chart_session_change_abandons_both_history_requests() {
+        let mut chart = Chart::blank(1, "NVDA", DataSource::Yahoo);
+        chart.candles = vec![candle(10, 1.0)];
+        chart.last_data_ms = Some(10);
+        chart.last_paper_quote = Some((1.0, Instant::now()));
+        chart.loading = true;
+        let (newest_tx, newest_rx) = mpsc::channel();
+        chart.inbox = Some(newest_rx);
+        let (older_tx, older_rx) = mpsc::channel();
+        chart.older.started();
+        chart.older_inbox = Some(OlderRequest {
+            receiver: older_rx,
+            source: DataSource::Yahoo,
+            symbol: "NVDA".into(),
+            timeframe: Timeframe::HOUR_1,
+        });
+        let generation = chart.fetch_generation.load(Ordering::Acquire);
+
+        assert!(chart.prepare_yahoo_session(Timeframe::HOUR_1, true));
+        assert!(chart.candles.is_empty());
+        assert!(chart.inbox.is_none());
+        assert!(chart.older_inbox.is_none());
+        assert!(!chart.loading);
+        assert!(chart.last_data_ms.is_none());
+        assert!(chart.last_paper_quote.is_none());
+        assert!(chart.fetch_generation.load(Ordering::Acquire) > generation);
+        assert!(newest_tx.send(Ok(Fetched {
+            candles: vec![candle(20, 2.0)],
+            bars: Vec::new(),
+            series: Vec::new(),
+        })).is_err());
+        assert!(older_tx.send(Ok(vec![candle(1, 1.0)])).is_err());
+
+        assert!(!chart.prepare_yahoo_session(Timeframe::HOUR_1, true));
+        chart.candles = vec![candle(30, 3.0)];
+        assert!(chart.prepare_yahoo_session(Timeframe::HOUR_1, false));
+        assert!(chart.candles.is_empty());
+    }
+
+    #[test]
+    fn yahoo_chart_session_change_leaves_other_sources_and_daily_history_alone() {
+        for (source, symbol, timeframe) in [
+            (DataSource::Binance, "BTCUSDT", Timeframe::HOUR_1),
+            (DataSource::Yahoo, "NVDA", Timeframe::DAY_1),
+            (DataSource::Yahoo, "EURUSD=X", Timeframe::HOUR_1),
+        ] {
+            let mut chart = Chart::blank(1, symbol, source);
+            chart.candles = vec![candle(10, 1.0)];
+            assert!(!chart.prepare_yahoo_session(timeframe, true));
+            assert_eq!(chart.candles.len(), 1);
+        }
     }
 
     #[test]
