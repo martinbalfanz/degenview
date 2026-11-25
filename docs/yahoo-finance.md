@@ -61,6 +61,12 @@ One shared subscription per active watchlist coordinator uses Wickline's Yahoo v
 
 Run the offline decoder/merge tests and, during a US regular session, `cargo test --lib live_yahoo_receives_regular_session_tick -- --ignored --nocapture`. Live connectivity and payload variation still require verification. Extending streaming to charts requires authoritative REST reconciliation and careful distinction between cumulative session volume and per-candle volume.
 
+## Streaming chart price marker
+
+Visible US Yahoo equity/ETF charts request quotes through the existing shared coordinator even when the watchlist sidebar is closed. The separate chart consumer uses a lease and releases on workspace drop; replay suspends demand and hides the marker. A recent regular-session quote (REST or streaming) is shown as a dashed indicative price line and label, without replacing the candle-close tag. No additional socket per chart. The marker is hidden on stale, invalid, older-than-last-bar, off-session or out-of-view quotes and on snapshots. It does not affect scaling, OHLCV, scripts, table feeds, MCP, alerts or backtests. The existing REST candle refresh remains authoritative. This is intentionally a view-only streaming increment rather than claiming that a sequence of indicative ticks is a complete per-candle trade feed.
+
+The next candle-specific milestone is a provisional forming-bar display reconciled against complete REST bars, without allocating cumulative session volume to an arbitrary timeframe. It must be tested against gaps, late data, corrections, replay and volume-based scripts.
+
 ## Deeper hourly history: design constraint
 
 Yahoo's native 60m history can reach up to roughly 730 days, but US equity candles are ordinarily anchored to the regular session open (09:30 Eastern), whereas DegenView and Pine share UTC-hour buckets. The first native 60m candle can span two of DegenView's buckets. Neither relabeling that candle nor splicing old native hourly candles onto recent 15m folds preserves OHLC or volume. Keep the existing 60-day hourly history until a consistent session-anchored bucket model can be used by charts, older paging, Pine timeframe conversion, overlays, replay and the cache. If added, that model must use a distinct cache identity and real exchange timestamps, handle holidays and short sessions, and apply consistently to the whole series, not only older pages.

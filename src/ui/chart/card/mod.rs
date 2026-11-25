@@ -276,6 +276,8 @@ pub struct ChartCard {
     top_inset: f32,
     /// A human-readable title shown instead of an opaque provider id.
     title: Option<String>,
+    /// An indicative Yahoo price observation, never part of the candle series.
+    yahoo_quote: Option<f64>,
     /// The choices of a multi-choice prediction market; empty for every other chart.
     series: Vec<SeriesLine>,
     /// During replay, the last time the lines may reach.
@@ -417,6 +419,7 @@ impl Default for ChartCard {
             axis_width: 0.0,
             top_inset: 0.0,
             title: None,
+            yahoo_quote: None,
             series: Vec::new(),
             series_cutoff: None,
             overlay: overlays::OverlayState::default(),
@@ -646,6 +649,11 @@ impl ChartCard {
 
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()
+    }
+
+    /// View-only price marker; cannot change chart data, scripts or volume.
+    pub fn set_yahoo_quote(&mut self, price: Option<f64>) {
+        self.yahoo_quote = price.filter(|price| price.is_finite() && *price > 0.0);
     }
 
     pub fn set_title(&mut self, title: Option<String>) {

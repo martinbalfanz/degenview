@@ -82,6 +82,8 @@ pub(super) struct Decor<'a> {
     /// The watermark names the replay.
     pub replay_active: bool,
     pub time_lock: bool,
+    /// Only the interactive chart draws the current indicative quote; never snapshots.
+    pub indicative_quote: bool,
     pub crosshair: Option<&'a CrosshairInfo>,
 }
 
@@ -522,6 +524,14 @@ impl ChartCard {
             shown_synthetic.and_then(|_| bars.last()),
             style,
         );
+        if decor.indicative_quote && !decor.replay_active
+            && data.source == DataSource::Yahoo
+            && data.source.yahoo_stream_symbol(data.symbol)
+            && view.end == bars.len()
+            && let Some(price) = self.yahoo_quote
+        {
+            self.draw_yahoo_quote(&clipped, plot, scale, price, candles.last(), style);
+        }
         let main_tag_y = candles.last().map(|last| scale.y(last.close));
         self.paint_overlay_tags(
             &main_painter,

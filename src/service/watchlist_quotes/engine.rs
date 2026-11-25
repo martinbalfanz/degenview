@@ -616,7 +616,7 @@ impl Engine {
                 if source == DataSource::Yahoo {
                     // A slow snapshot must not rewind a more recent stream tick.
                     if let Some(last) = self.known.get(key)
-                        && last.timestamp_ms.zip(quote.timestamp_ms).is_some_and(|(old, new)| new < old)
+                        && last.timestamp_ms.is_some_and(|old| quote.timestamp_ms.is_none_or(|new| new < old))
                     {
                         self.rejected.remove(key);
                         continue;
