@@ -1,0 +1,92 @@
+use super::*;
+
+#[test]
+fn symbols_and_searches_are_encoded_as_single_url_values() {
+    assert_eq!(encode("^GSPC"), "%5EGSPC");
+    assert_eq!(encode("EURUSD=X"), "EURUSD%3DX");
+    assert_eq!(encode("A/B & ü"), "A%2FB%20%26%20%C3%BC");
+    let path = chart_path("BRK-B", Interval::Day, 0, DAY, true).unwrap();
+    assert!(path.ends_with("includePrePost=false"));
+    assert!(chart_path("AAPL", Interval::Minute, 0, 8 * DAY, false).is_err());
+    assert!(chart_path("AAPL", Interval::Minute, DAY, DAY, false).is_err());
+    assert!(chart_path("AAPL", Interval::Hour, 0, DAY, true)
+        .unwrap()
+        .ends_with("includePrePost=true"));
+}
+
+#[test]
+fn chart_preserves_utc_timestamps_nulls_and_latest_duplicate() {
+    let body = r#"{"chart":{"error":null,"result":[{
+        "meta":{"symbol":"AAPL","currency":"USD",
+                "exchangeTimezoneName":"America/New_York","gmtoffset":-18000},
+        "timestamp":[200,100,200,300,400,500],
+        "indicators":{"quote":[{
+            "open":[12,10,12,null,14,15],
+            "high":[14,11,15,14,13,16],
+            "low":[11,9,11,12,13,14],
+            "close":[13,10,14,13,14,15],
+            "volume":[100,null,110,200,300,0]
+        }]}
+    }]}}"#;
+    let chart = parse_chart(body).unwrap();
+    assert_eq!(chart.meta.exchange_timezone_name.as_deref(), Some("America/New_York"));
+    assert_eq!(chart.bars.len(), 3);
+    assert_eq!(chart.bars[0].timestamp, 100);
+    assert_eq!(chart.bars[0].volume, None);
+    assert_eq!(chart.bars[1].timestamp, 200);
+    assert_eq!(chart.bars[1].close, 14.0);
+    assert_eq!(chart.bars[1].volume, Some(110.0));
+    assert_eq!(chart.bars[2].volume, Some(0.0));
+}
+
+#[test]
+fn malformed_columns_and_vendor_errors_do_not_become_empty_history() {
+    let invalid = r#"{"chart":{"result":[{
+        "meta":{"symbol":"AAPL"},"timestamp":[100,200],
+        "indicators":{"quote":[{"open":[1],"high":[2,2],"low":[1,1],"close":[2,2]}]}
+    }],"error":null}}"#;
+    assert!(matches!(parse_chart(invalid), Err(ProviderError::Data(_))));
+    let refused = r#"{"chart":{"result":null,"error":{"code":"Not Found","description":"No data"}}}"#;
+    assert!(matches!(parse_chart(refused), Err(ProviderError::Other(_))));
+    let empty = r#"{"chart":{"result":[{"meta":{"symbol":"AAPL"}}],"error":null}}"#;
+    assert!(parse_chart(empty).unwrap().bars.is_empty());
+}
+
+#[test]
+fn search_preserves_instrument_identity_and_excludes_options_and_duplicates() {
+    let body = r#"{"quotes":[
+        {"symbol":"^GSPC","shortname":"S&P 500","quoteType":"INDEX"},
+        {"symbol":"BAS.DE","longname":"BASF SE","quoteType":"EQUITY","exchDisp":"XETRA"},
+        {"symbol":"BAS.DE","quoteType":"EQUITY"},
+        {"symbol":"AAPL261204C00100000","quoteType":"OPTION"},
+        {"symbol":"EURUSD=X","quoteType":"CURRENCY"},
+        {"symbol":"UNKNOWN"}
+    ]}"#;
+    let instruments = parse_search(body).unwrap();
+    assert_eq!(instruments.len(), 3);
+    assert_eq!(instruments[0].symbol, "^GSPC");
+    assert_eq!(instruments[1].name, "BASF SE");
+    assert_eq!(instruments[1].exchange.as_deref(), Some("XETRA"));
+    assert_eq!(instruments[2].name, "EURUSD=X");
+}
+
+#[test]
+fn spark_preserves_previous_close_currency_and_vendor_time() {
+    let body = r#"{"spark":{"error":null,"result":[
+        {"symbol":"BAS.DE","response":[{"meta":{
+            "regularMarketPrice":45.5,"chartPreviousClose":44.0,
+            "previousClose":43.0,"regularMarketTime":123,"currency":"EUR"
+        }}]},
+        {"symbol":"AAPL","response":[{"meta":{"regularMarketPrice":100.0}}]},
+        {"symbol":"MISSING","response":[]}
+    ]}}"#;
+    let result = parse_quotes(body).unwrap();
+    assert_eq!(result.len(), 2);
+    assert_eq!(result[0].previous_close, Some(44.0));
+    assert_eq!(result[0].timestamp, Some(123));
+    assert_eq!(result[0].currency.as_deref(), Some("EUR"));
+    assert_eq!(result[1].timestamp, None);
+    assert_eq!(result[1].previous_close, None);
+    assert!(quotes(&["AAPL,MSFT"]).is_err());
+    assert!(quotes(&["AAPL"; QUOTE_BATCH_SIZE + 1]).is_err());
+}

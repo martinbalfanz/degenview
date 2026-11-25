@@ -21,3 +21,4 @@ pub(in crate::service) mod polymarket;
 pub mod retry;
 pub mod search_rank;
 pub mod trend;
+pub mod yahoo;
