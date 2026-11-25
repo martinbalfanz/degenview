@@ -561,7 +561,10 @@ fn the_detail_card_is_as_tall_as_it_says_whatever_the_quote_holds() {
     let with_note = detail_card_height(Some(noted.clone()), None);
     assert_eq!(with_note, detail_height(Some(&noted), false));
     assert!(with_note > plain, "a note takes a band of its own");
-    let secondary = WatchlistQuote { last: Some(147.35), ..Default::default() };
+    let secondary = WatchlistQuote {
+        last: Some(147.35),
+        ..Default::default()
+    };
     let with_secondary = detail_card_height(None, Some(secondary));
     assert_eq!(with_secondary, detail_height(None, true));
     assert!(with_secondary > plain);

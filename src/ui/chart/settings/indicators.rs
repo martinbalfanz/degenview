@@ -34,7 +34,11 @@ pub(super) fn indicators_page(ui: &mut Ui, c: &mut ChartSettingsContext) {
         card::card(ui, Icon::BarChart, tr!("Volume Bars"), Some(&hint), |ui| {
             // Left visible rather than hidden: a greyed-out switch with a reason reads better
             // than a setting that silently does nothing.
-            card::switch_enabled(ui, &mut config.show_volume, source.provides_market_volume(c.symbol));
+            card::switch_enabled(
+                ui,
+                &mut config.show_volume,
+                source.provides_market_volume(c.symbol),
+            );
         });
     }
     card::card(

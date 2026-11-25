@@ -551,7 +551,10 @@ pub fn session_statistics(
         instrument: data.instrument.key(),
         timeframe: workspace.timeframe().label(),
         bar_ms: workspace.timeframe().nominal_ms(),
-        hours: crate::model::session_stats::MarketHours::for_market(data.instrument.source, &data.instrument.symbol),
+        hours: crate::model::session_stats::MarketHours::for_market(
+            data.instrument.source,
+            &data.instrument.symbol,
+        ),
     };
     crate::mcp::session_stats::session_stats(&meta, data.candles, query)
 }

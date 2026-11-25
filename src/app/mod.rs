@@ -174,7 +174,9 @@ impl DegenViewApp {
         store: SharedStore,
         sync_factory: Option<Arc<dyn crate::sync::transport::TransportFactory>>,
     ) -> Self {
-        let yahoo_extended = store.lock().ok()
+        let yahoo_extended = store
+            .lock()
+            .ok()
             .and_then(|store| store.setting(crate::model::market::yahoo_session::SETTINGS_KEY))
             .unwrap_or(false);
         crate::model::market::yahoo_session::initialize(yahoo_extended);

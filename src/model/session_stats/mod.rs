@@ -391,8 +391,12 @@ impl MarketHours {
             Self::Continuous => "UTC days",
             Self::UsStock => "US regular hours",
             Self::International(market) => market.name(),
-            Self::Derivative(crate::model::YahooDerivative::Forex { .. }) => "New York FX trading day",
-            Self::Derivative(crate::model::YahooDerivative::Future { .. }) => "CME Globex trading day",
+            Self::Derivative(crate::model::YahooDerivative::Forex { .. }) => {
+                "New York FX trading day"
+            }
+            Self::Derivative(crate::model::YahooDerivative::Future { .. }) => {
+                "CME Globex trading day"
+            }
         }
     }
 
@@ -402,8 +406,12 @@ impl MarketHours {
             Self::Continuous => tr!("UTC days"),
             Self::UsStock => tr!("US regular hours"),
             Self::International(market) => market.name(),
-            Self::Derivative(crate::model::YahooDerivative::Forex { .. }) => tr!("New York FX trading day"),
-            Self::Derivative(crate::model::YahooDerivative::Future { .. }) => tr!("CME Globex trading day"),
+            Self::Derivative(crate::model::YahooDerivative::Forex { .. }) => {
+                tr!("New York FX trading day")
+            }
+            Self::Derivative(crate::model::YahooDerivative::Future { .. }) => {
+                tr!("CME Globex trading day")
+            }
         }
     }
 }
@@ -619,10 +627,15 @@ fn sessions(bars: &[Kline], bar_ms: i64, hours: MarketHours, intraday: bool) -> 
                 continue;
             }
             let date_ms = if let MarketHours::Derivative(derivative) = hours {
-                let instant = if market.is_regular(bar.open_time) { bar.open_time } else { last };
+                let instant = if market.is_regular(bar.open_time) {
+                    bar.open_time
+                } else {
+                    last
+                };
                 derivative.trading_day_ms(instant)
             } else {
-                let offset = crate::pine::time::zone_offset_secs(Some(market.zone()), bar.open_time);
+                let offset =
+                    crate::pine::time::zone_offset_secs(Some(market.zone()), bar.open_time);
                 bar.open_time + offset * 1_000
             };
             let c = calendar::components(date_ms);

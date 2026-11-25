@@ -421,7 +421,10 @@ pub fn show(
                 .selected_entry
                 .and_then(|id| list.instruments().find(|item| item.id == id))
                 .map_or(0.0, |item| {
-                    detail_height((input.quote)(&item.instrument).as_ref(), (input.extended_quote)(&item.instrument).is_some())
+                    detail_height(
+                        (input.quote)(&item.instrument).as_ref(),
+                        (input.extended_quote)(&item.instrument).is_some(),
+                    )
                 });
             if detail_height > 0.0 {
                 egui::Panel::bottom(Id::new(("watchlist-detail", list.id)))

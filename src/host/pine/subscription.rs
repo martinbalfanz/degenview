@@ -4,9 +4,9 @@
 //! already owns the webhook + notification services.
 
 use crate::host::pine::SessionSecurityDataProvider;
-use crate::model::market::yahoo_session::{self, PolicySnapshot};
 use crate::model::alert::pine::{PineAlertState, PineAlertSubscription};
 use crate::model::chart::synthetic::Construction;
+use crate::model::market::yahoo_session::{self, PolicySnapshot};
 use crate::model::pine::instance::PineInstance;
 use crate::model::{Kline, Timeframe};
 use crate::pine::compiler::program::SymbolInfo;
@@ -315,9 +315,15 @@ impl PineSubscriptionHost {
 /// Builds the `SymbolInfo` a subscription's `"<source>:<ticker>"` key implies. Ticker id is the
 /// full key; the base currency is left `None` (the runtime treats it as a non-pair).
 pub fn symbol_info(symbol_key: &str) -> SymbolInfo {
-    let (source, ticker) = symbol_key.split_once(':').map_or((None, symbol_key), |(prefix, ticker)| {
-        (crate::model::DataSource::from_watchlist_slug(prefix), ticker)
-    });
+    let (source, ticker) =
+        symbol_key
+            .split_once(':')
+            .map_or((None, symbol_key), |(prefix, ticker)| {
+                (
+                    crate::model::DataSource::from_watchlist_slug(prefix),
+                    ticker,
+                )
+            });
     let derivative = source.and_then(|source| source.yahoo_derivative(ticker));
     let kind = if let Some(market) = derivative {
         market.kind()
@@ -331,9 +337,14 @@ pub fn symbol_info(symbol_key: &str) -> SymbolInfo {
     SymbolInfo {
         ticker: ticker.to_owned(),
         ticker_id: symbol_key.to_owned(),
-        currency: source.and_then(|source| source.equity_currency(ticker)).unwrap_or("USD").to_owned(),
+        currency: source
+            .and_then(|source| source.equity_currency(ticker))
+            .unwrap_or("USD")
+            .to_owned(),
         kind: kind.to_owned(),
-        base_currency: derivative.and_then(|market| market.base_currency()).map(str::to_owned),
+        base_currency: derivative
+            .and_then(|market| market.base_currency())
+            .map(str::to_owned),
         ..SymbolInfo::default()
     }
 }
@@ -417,18 +428,60 @@ mod tests {
     fn yahoo_session_revision_rebuilds_alerts_without_firing_history() {
         let source = "//@version=6\nindicator(\"S\")\nalert(\"hi\", alert.freq_all)";
         let store = Store::open_in_memory().expect("open");
-        store.replace_pine_subscriptions(&[subscription(1, source)]).unwrap();
+        store
+            .replace_pine_subscriptions(&[subscription(1, source)])
+            .unwrap();
         let mut host = PineSubscriptionHost::load(&store);
         let applied = [instance(source)];
         let mut data = bars();
         let chart = ChartRun::default();
         let original = PolicySnapshot::default();
-        let changed = PolicySnapshot { extended: false, revision: 2 };
-        assert!(host.run_active_with_policy(1, "binance:BTCUSDT", "1h", &data, &chart, &applied, LIVE_NOW, original).is_empty());
+        let changed = PolicySnapshot {
+            extended: false,
+            revision: 2,
+        };
+        assert!(
+            host.run_active_with_policy(
+                1,
+                "binance:BTCUSDT",
+                "1h",
+                &data,
+                &chart,
+                &applied,
+                LIVE_NOW,
+                original
+            )
+            .is_empty()
+        );
         data[4].close += 1.0;
-        assert!(host.run_active_with_policy(1, "binance:BTCUSDT", "1h", &data, &chart, &applied, LIVE_NOW + 1, changed).is_empty());
+        assert!(
+            host.run_active_with_policy(
+                1,
+                "binance:BTCUSDT",
+                "1h",
+                &data,
+                &chart,
+                &applied,
+                LIVE_NOW + 1,
+                changed
+            )
+            .is_empty()
+        );
         data[4].close += 1.0;
-        assert_eq!(host.run_active_with_policy(1, "binance:BTCUSDT", "1h", &data, &chart, &applied, LIVE_NOW + 2, changed).len(), 1);
+        assert_eq!(
+            host.run_active_with_policy(
+                1,
+                "binance:BTCUSDT",
+                "1h",
+                &data,
+                &chart,
+                &applied,
+                LIVE_NOW + 2,
+                changed
+            )
+            .len(),
+            1
+        );
     }
 
     #[test]

@@ -176,7 +176,13 @@ pub fn row(
     result_icon(ui, icon, result);
 
     // The exchange sits at the right edge; a prediction market's chance is left of it.
-    let logo_left = venue_block_kind(ui, rect, content_right, result.source, super::search::result_kind(result));
+    let logo_left = venue_block_kind(
+        ui,
+        rect,
+        content_right,
+        result.source,
+        super::search::result_kind(result),
+    );
     let mut text_right = logo_left;
     if result.source.is_prediction_market()
         && let Some(chance) = result.price

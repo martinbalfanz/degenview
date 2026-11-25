@@ -587,12 +587,21 @@ mod yahoo_tests {
             now,
         );
         assert_eq!(quote.freshness, Freshness::Delayed);
-        assert!(quote.note.is_none(), "the freshness tile conveys the delay status");
+        assert!(
+            quote.note.is_none(),
+            "the freshness tile conveys the delay status"
+        );
         assert!(quote.freshness.is_recent());
         assert!(!quote.freshness.is_current());
         assert_eq!(quote.timestamp_ms, Some(now - 900_000));
         assert_eq!(quote.change_basis, Some(ChangeBasis::PreviousClose));
-        assert_eq!(evaluate_freshness(DataSource::Yahoo, now, now + 120_000), Freshness::Delayed);
-        assert_eq!(evaluate_freshness(DataSource::Yahoo, now, now + 120_001), Freshness::Stale);
+        assert_eq!(
+            evaluate_freshness(DataSource::Yahoo, now, now + 120_000),
+            Freshness::Delayed
+        );
+        assert_eq!(
+            evaluate_freshness(DataSource::Yahoo, now, now + 120_001),
+            Freshness::Stale
+        );
     }
 }

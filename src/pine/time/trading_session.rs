@@ -130,7 +130,8 @@ impl MarketSessions {
     pub fn derivative(market: crate::model::YahooDerivative) -> Self {
         Self {
             zone: market.timezone(),
-            regular: TradingSession::parse(market.regular_session()).expect("a constant session parses"),
+            regular: TradingSession::parse(market.regular_session())
+                .expect("a constant session parses"),
             premarket: None,
             postmarket: None,
             derivative: Some(market),
@@ -140,7 +141,8 @@ impl MarketSessions {
     pub fn international(market: crate::model::YahooMarket) -> Self {
         Self {
             zone: market.timezone(),
-            regular: TradingSession::parse(market.regular_session()).expect("a constant session parses"),
+            regular: TradingSession::parse(market.regular_session())
+                .expect("a constant session parses"),
             premarket: None,
             postmarket: None,
             derivative: None,
@@ -432,8 +434,12 @@ mod yahoo_international_tests {
         ] {
             let market = MarketSessions::for_symbol("stock", symbol);
             assert_eq!(market.zone(), zone);
-            let winter = crate::pine::time::calendar::make(2026, 1, 12, winter_hour, winter_minute, 0, 0).unwrap();
-            let summer = crate::pine::time::calendar::make(2026, 7, 13, summer_hour, winter_minute, 0, 0).unwrap();
+            let winter =
+                crate::pine::time::calendar::make(2026, 1, 12, winter_hour, winter_minute, 0, 0)
+                    .unwrap();
+            let summer =
+                crate::pine::time::calendar::make(2026, 7, 13, summer_hour, winter_minute, 0, 0)
+                    .unwrap();
             for open in [winter, summer] {
                 assert!(market.is_regular(open));
                 assert!(!market.is_regular(open - 60_000));

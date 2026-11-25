@@ -129,18 +129,21 @@ pub(crate) fn historical_prices_revised(candles: &[Kline], tail: &[Kline]) -> bo
     let Some(last) = candles.last() else {
         return false;
     };
-    tail.iter().filter(|bar| bar.open_time < last.open_time).any(|bar| {
-        candles.binary_search_by_key(&bar.open_time, |held| held.open_time)
-            .ok()
-            .is_some_and(|index| {
-                let held = &candles[index];
-                held.close_time != bar.close_time
-                    || [held.open, held.high, held.low, held.close]
-                    .into_iter()
-                    .zip([bar.open, bar.high, bar.low, bar.close])
-                    .any(|(old, new)| (old - new).abs() > old.abs().max(1.0) * 1e-6)
-            })
-    })
+    tail.iter()
+        .filter(|bar| bar.open_time < last.open_time)
+        .any(|bar| {
+            candles
+                .binary_search_by_key(&bar.open_time, |held| held.open_time)
+                .ok()
+                .is_some_and(|index| {
+                    let held = &candles[index];
+                    held.close_time != bar.close_time
+                        || [held.open, held.high, held.low, held.close]
+                            .into_iter()
+                            .zip([bar.open, bar.high, bar.low, bar.close])
+                            .any(|(old, new)| (old - new).abs() > old.abs().max(1.0) * 1e-6)
+                })
+        })
 }
 
 /// What a refresh leaves on the chart: the candles it brought, with the older ones the chart

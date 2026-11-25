@@ -100,7 +100,10 @@ impl<'a> TimeAxis<'a> {
     /// A live hover axis may include one observed slot without adding a candle
     /// to the data or changing the navigation/snapshot axis.
     pub(crate) fn with_preview_tail(bars: &'a [Kline], open: i64, end: i64) -> Self {
-        let tail = bars.last().filter(|last| open > last.open_time && open > last.close_time && end > open).map(|_| (open, end));
+        let tail = bars
+            .last()
+            .filter(|last| open > last.open_time && open > last.close_time && end > open)
+            .map(|_| (open, end));
         Self { bars, tail }
     }
 
@@ -110,8 +113,14 @@ impl<'a> TimeAxis<'a> {
 
     /// Time of slot edge `index`, `0..=len`.
     fn edge(&self, index: usize) -> f64 {
-        if let Some((open, end)) = self.tail && index >= self.bars.len() {
-            return if index == self.bars.len() { open as f64 } else { end as f64 };
+        if let Some((open, end)) = self.tail
+            && index >= self.bars.len()
+        {
+            return if index == self.bars.len() {
+                open as f64
+            } else {
+                end as f64
+            };
         }
         match self.bars.get(index) {
             Some(bar) => bar.open_time as f64,
@@ -125,7 +134,9 @@ impl<'a> TimeAxis<'a> {
     /// bar that closes as it opens, the spacing to the next bar's open (the last bar takes the
     /// spacing before it, a lone bar a millisecond).
     fn span(&self, index: usize) -> f64 {
-        if let Some((open, end)) = self.tail && index == self.bars.len() {
+        if let Some((open, end)) = self.tail
+            && index == self.bars.len()
+        {
             return (end - open) as f64;
         }
         let bar = &self.bars[index];
@@ -177,7 +188,9 @@ impl<'a> TimeAxis<'a> {
             let index = if self.tail.is_some_and(|(open, _)| time >= open as f64) {
                 self.bars.len()
             } else {
-                self.bars.partition_point(|bar| bar.open_time as f64 <= time).saturating_sub(1)
+                self.bars
+                    .partition_point(|bar| bar.open_time as f64 <= time)
+                    .saturating_sub(1)
             };
             let (from, to) = (self.edge(index), self.edge(index + 1));
             if to > from {
@@ -513,7 +526,15 @@ mod tests;
 #[cfg(test)]
 #[test]
 fn yahoo_preview_hover_axis_compresses_session_gap_and_round_trips() {
-    let bars = [Kline { open_time: 0, close_time: 299_999, open: 100.0, high: 102.0, low: 98.0, close: 101.0, volume: 1.0 }];
+    let bars = [Kline {
+        open_time: 0,
+        close_time: 299_999,
+        open: 100.0,
+        high: 102.0,
+        low: 98.0,
+        close: 101.0,
+        volume: 1.0,
+    }];
     let open = 3 * 86_400_000;
     let axis = TimeAxis::with_preview_tail(&bars, open, open + 300_000);
     assert_eq!(axis.len(), 2);

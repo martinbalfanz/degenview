@@ -1296,9 +1296,9 @@ fn a_venue_the_tab_does_not_list_says_so() {
     assert!(rig.names().is_empty());
     let shown = texts(&mut rig);
     assert!(
-        shown
-            .iter()
-            .any(|text| text == "Binance has no markets under Traditional markets. Try another tab."),
+        shown.iter().any(
+            |text| text == "Binance has no markets under Traditional markets. Try another tab."
+        ),
         "{shown:?}"
     );
 }

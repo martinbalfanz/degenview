@@ -87,7 +87,10 @@ pub fn candles_result(
     });
     let start = end.saturating_sub(limit);
     let page = &candles[start..end];
-    let provides_volume = meta.instrument.source.provides_market_volume(&meta.instrument.symbol);
+    let provides_volume = meta
+        .instrument
+        .source
+        .provides_market_volume(&meta.instrument.symbol);
     let bars: Vec<CandleRow> = page
         .iter()
         .map(|bar| {

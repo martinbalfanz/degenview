@@ -29,11 +29,18 @@ impl WatchlistQuoteBook {
 
     /// Secondary pre/post observation, never the sortable regular price.
     pub fn get_extended(&self, instrument: &InstrumentId) -> Option<WatchlistQuote> {
-        self.inner.extended.read().ok()?.get(&instrument.key()).cloned()
+        self.inner
+            .extended
+            .read()
+            .ok()?
+            .get(&instrument.key())
+            .cloned()
     }
 
     pub(super) fn replace_extended(&self, updates: HashMap<String, WatchlistQuote>) {
-        let Ok(mut quotes) = self.inner.extended.write() else { return };
+        let Ok(mut quotes) = self.inner.extended.write() else {
+            return;
+        };
         if *quotes != updates {
             *quotes = updates;
             self.inner.revision.fetch_add(1, Ordering::AcqRel);

@@ -149,8 +149,14 @@ impl YahooMarket {
 /// These are charting instruments, not executable contracts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum YahooDerivative {
-    Forex { base: &'static str, quote: &'static str },
-    Future { root: &'static str, exchange: &'static str },
+    Forex {
+        base: &'static str,
+        quote: &'static str,
+    },
+    Future {
+        root: &'static str,
+        exchange: &'static str,
+    },
 }
 
 impl YahooDerivative {
@@ -166,10 +172,30 @@ impl YahooDerivative {
             "NZDUSD=X" => ("NZD", "USD"),
             "EURGBP=X" => ("EUR", "GBP"),
             "EURJPY=X" => ("EUR", "JPY"),
-            "ES=F" => return Some(Self::Future { root: "ES", exchange: "CME" }),
-            "NQ=F" => return Some(Self::Future { root: "NQ", exchange: "CME" }),
-            "GC=F" => return Some(Self::Future { root: "GC", exchange: "CMX" }),
-            "CL=F" => return Some(Self::Future { root: "CL", exchange: "NYM" }),
+            "ES=F" => {
+                return Some(Self::Future {
+                    root: "ES",
+                    exchange: "CME",
+                });
+            }
+            "NQ=F" => {
+                return Some(Self::Future {
+                    root: "NQ",
+                    exchange: "CME",
+                });
+            }
+            "GC=F" => {
+                return Some(Self::Future {
+                    root: "GC",
+                    exchange: "CMX",
+                });
+            }
+            "CL=F" => {
+                return Some(Self::Future {
+                    root: "CL",
+                    exchange: "NYM",
+                });
+            }
             _ => return None,
         };
         Some(Self::Forex { base, quote })
@@ -310,8 +336,12 @@ impl DataSource {
     /// First Yahoo streaming scope: USD equities and ETFs, not indexes, FX,
     /// futures or non-US listings. REST metadata still has to validate them.
     pub fn yahoo_stream_symbol(self, symbol: &str) -> bool {
-        self == Self::Yahoo && !symbol.is_empty() && symbol.len() <= 12
-            && symbol.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        self == Self::Yahoo
+            && !symbol.is_empty()
+            && symbol.len() <= 12
+            && symbol
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
     }
 
     /// Whether watchlist prices of this source come from a ticker socket.
@@ -334,8 +364,21 @@ impl DataSource {
         self == Self::Yahoo
             && matches!(
                 symbol.trim().to_ascii_uppercase().as_str(),
-                "^GSPC" | "^IXIC" | "^NDX" | "^DJI" | "^RUT" | "^VIX" | "^GDAXI"
-                    | "^FCHI" | "^AEX" | "^BFX" | "FTSEMIB.MI" | "^IBEX" | "^SSMI" | "^FTSE" | "^GSPTSE"
+                "^GSPC"
+                    | "^IXIC"
+                    | "^NDX"
+                    | "^DJI"
+                    | "^RUT"
+                    | "^VIX"
+                    | "^GDAXI"
+                    | "^FCHI"
+                    | "^AEX"
+                    | "^BFX"
+                    | "FTSEMIB.MI"
+                    | "^IBEX"
+                    | "^SSMI"
+                    | "^FTSE"
+                    | "^GSPTSE"
             )
     }
 
@@ -356,7 +399,8 @@ impl DataSource {
     }
 
     pub fn yahoo_portfolio_excluded(self, symbol: &str) -> bool {
-        self.is_yahoo_index(symbol) || self.yahoo_market(symbol).is_some()
+        self.is_yahoo_index(symbol)
+            || self.yahoo_market(symbol).is_some()
             || self.yahoo_derivative(symbol).is_some()
     }
 
@@ -376,8 +420,11 @@ impl DataSource {
     /// Index levels are not traded shares. Do not present index feed volume
     /// (which may be absent or an aggregate) as ordinary share volume.
     pub fn provides_market_volume(self, symbol: &str) -> bool {
-        self.provides_volume() && !self.is_yahoo_index(symbol)
-            && self.yahoo_derivative(symbol).is_none_or(|market| market.has_volume())
+        self.provides_volume()
+            && !self.is_yahoo_index(symbol)
+            && self
+                .yahoo_derivative(symbol)
+                .is_none_or(|market| market.has_volume())
     }
 
     /// Whether this source reports per-candle turnover for the volume bars to draw. CoinGecko's
@@ -617,8 +664,14 @@ mod yahoo_market_tests {
 
     #[test]
     fn exchange_profiles_are_source_qualified_and_keep_currency_units() {
-        assert_eq!(DataSource::Yahoo.yahoo_market("air.pa"), Some(YahooMarket::Paris));
-        assert_eq!(DataSource::Yahoo.yahoo_market("^FTSE"), Some(YahooMarket::London));
+        assert_eq!(
+            DataSource::Yahoo.yahoo_market("air.pa"),
+            Some(YahooMarket::Paris)
+        );
+        assert_eq!(
+            DataSource::Yahoo.yahoo_market("^FTSE"),
+            Some(YahooMarket::London)
+        );
         assert_eq!(DataSource::Yahoo.equity_currency("RY.TO"), Some("CAD"));
         assert_eq!(DataSource::Yahoo.equity_currency("NESN.SW"), Some("CHF"));
         assert_eq!(DataSource::Yahoo.yahoo_market("BRK-B"), None);
@@ -640,8 +693,16 @@ mod yahoo_derivative_tests {
         assert_eq!(fx.base_currency(), Some("EUR"));
         assert_eq!(fx.currency(), "JPY");
         assert!(!fx.has_volume());
-        assert_eq!(DataSource::Yahoo.yahoo_derivative("JPY=X"), DataSource::Yahoo.yahoo_derivative("USDJPY=X"));
-        assert!(DataSource::Yahoo.yahoo_derivative("ES=F").unwrap().has_volume());
+        assert_eq!(
+            DataSource::Yahoo.yahoo_derivative("JPY=X"),
+            DataSource::Yahoo.yahoo_derivative("USDJPY=X")
+        );
+        assert!(
+            DataSource::Yahoo
+                .yahoo_derivative("ES=F")
+                .unwrap()
+                .has_volume()
+        );
         assert!(!DataSource::Yahoo.provides_market_volume("EURUSD=X"));
         assert!(DataSource::Yahoo.provides_market_volume("GC=F"));
     }

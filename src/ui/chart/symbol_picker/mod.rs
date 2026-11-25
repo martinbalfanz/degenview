@@ -1446,9 +1446,9 @@ impl SymbolPicker {
                 detail: error.to_string(),
                 settings: false,
             }),
-            None if self.needs_alpaca => {
-                Some(Notice::missing_key(tr!("Set up Alpaca to open an Alpaca chart")))
-            }
+            None if self.needs_alpaca => Some(Notice::missing_key(tr!(
+                "Set up Alpaca to open an Alpaca chart"
+            ))),
             None => None,
         }
     }

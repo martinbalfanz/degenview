@@ -309,11 +309,15 @@ pub fn instrument_row(ui: &mut egui::Ui, item: &WatchlistInstrument, row: &RowSt
                     )
                 } else {
                     let mut price = watchlist::quote::last_text(quote, source);
-                    if let Some(market) = item.instrument.source.yahoo_market(&item.instrument.symbol)
+                    if let Some(market) =
+                        item.instrument.source.yahoo_market(&item.instrument.symbol)
                         && quote.is_some_and(|quote| quote.last.is_some())
                     {
                         price.push_str(&format!(" {}", market.currency()));
-                    } else if let Some(market) = item.instrument.source.yahoo_derivative(&item.instrument.symbol)
+                    } else if let Some(market) = item
+                        .instrument
+                        .source
+                        .yahoo_derivative(&item.instrument.symbol)
                         && quote.is_some_and(|quote| quote.last.is_some())
                     {
                         price.push_str(&format!(" {}", market.currency()));

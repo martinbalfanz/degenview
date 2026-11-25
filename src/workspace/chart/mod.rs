@@ -349,7 +349,8 @@ impl Chart {
 
     /// Background consumers must not read history from a missed session change.
     pub(super) fn yahoo_session_is_current(&self, timeframe: Timeframe) -> bool {
-        self.yahoo_policy == market::yahoo_session::snapshot().effective(self.source, &self.symbol, timeframe)
+        self.yahoo_policy
+            == market::yahoo_session::snapshot().effective(self.source, &self.symbol, timeframe)
     }
 
     /// Drop data and answers belonging to the previous effective session mode. The
@@ -412,9 +413,18 @@ impl Chart {
             {
                 return;
             }
-            let result = if choices.is_empty() && source.yahoo_stream_symbol(&symbol) && timeframe.is_intraday() {
-                service::fetch_yahoo_chart_observed(&symbol, timeframe, CANDLE_LIMIT, extended)
-                    .map(|(candles, started)| Fetched { candles, bars: Vec::new(), series: Vec::new(), yahoo_request_started_ms: Some(started) })
+            let result = if choices.is_empty()
+                && source.yahoo_stream_symbol(&symbol)
+                && timeframe.is_intraday()
+            {
+                service::fetch_yahoo_chart_observed(&symbol, timeframe, CANDLE_LIMIT, extended).map(
+                    |(candles, started)| Fetched {
+                        candles,
+                        bars: Vec::new(),
+                        series: Vec::new(),
+                        yahoo_request_started_ms: Some(started),
+                    },
+                )
             } else if choices.is_empty() {
                 service::fetch_klines_live_with_session(
                     source,
@@ -618,7 +628,8 @@ impl Chart {
                     && market::history::historical_prices_revised(&self.candles, &fresh)
                 {
                     self.reset_history();
-                    self.yahoo_preview.discard_samples(fetched.yahoo_request_started_ms);
+                    self.yahoo_preview
+                        .discard_samples(fetched.yahoo_request_started_ms);
                     self.chart.set_yahoo_preview(None);
                     self.chart.set_yahoo_quote(None);
                 }
@@ -680,14 +691,20 @@ mod tests {
     }
 
     fn session(extended: bool) -> PolicySnapshot {
-        PolicySnapshot { extended, revision: 0 }
+        PolicySnapshot {
+            extended,
+            revision: 0,
+        }
     }
 
     #[test]
     fn yahoo_chart_detects_missed_session_round_trip() {
         let mut chart = Chart::blank(1, "NVDA", DataSource::Yahoo);
         chart.candles = vec![candle(10, 1.0)];
-        let policy = PolicySnapshot { extended: false, revision: 2 };
+        let policy = PolicySnapshot {
+            extended: false,
+            revision: 2,
+        };
         assert!(chart.prepare_yahoo_session(Timeframe::HOUR_1, policy));
         assert!(chart.candles.is_empty());
         assert!(!chart.prepare_yahoo_session(Timeframe::HOUR_1, policy));
@@ -758,12 +775,16 @@ mod tests {
         assert!(chart.last_data_ms.is_none());
         assert!(chart.last_paper_quote.is_none());
         assert!(chart.fetch_generation.load(Ordering::Acquire) > generation);
-        assert!(newest_tx.send(Ok(Fetched {
-            candles: vec![candle(20, 2.0)],
-            bars: Vec::new(),
-            series: Vec::new(),
-            yahoo_request_started_ms: None,
-        })).is_err());
+        assert!(
+            newest_tx
+                .send(Ok(Fetched {
+                    candles: vec![candle(20, 2.0)],
+                    bars: Vec::new(),
+                    series: Vec::new(),
+                    yahoo_request_started_ms: None,
+                }))
+                .is_err()
+        );
         assert!(older_tx.send(Ok(vec![candle(1, 1.0)])).is_err());
 
         assert!(!chart.prepare_yahoo_session(Timeframe::HOUR_1, session(true)));
@@ -869,18 +890,30 @@ mod tests {
     #[test]
     fn yahoo_completed_revision_abandons_older_pages_and_pending_answers() {
         let mut chart = Chart::blank(1, "NVDA", DataSource::Yahoo);
-        chart.candles = vec![candle(7, 100.0), candle(8, 100.0), candle(10, 100.0), candle(11, 100.0)];
+        chart.candles = vec![
+            candle(7, 100.0),
+            candle(8, 100.0),
+            candle(10, 100.0),
+            candle(11, 100.0),
+        ];
         chart.older.arrived(2);
         chart.older.started();
         let (page_tx, page_rx) = mpsc::channel();
-        chart.older_inbox = Some(OlderRequest { receiver: page_rx, source: DataSource::Yahoo, symbol: "NVDA".into(), timeframe: Timeframe::HOUR_1 });
+        chart.older_inbox = Some(OlderRequest {
+            receiver: page_rx,
+            source: DataSource::Yahoo,
+            symbol: "NVDA".into(),
+            timeframe: Timeframe::HOUR_1,
+        });
         let (sender, receiver) = mpsc::channel();
-        sender.send(Ok(Fetched {
-            candles: vec![candle(10, 50.0), candle(11, 50.0), candle(12, 50.0)],
-            bars: Vec::new(),
-            series: Vec::new(),
-            yahoo_request_started_ms: Some(12),
-        })).unwrap();
+        sender
+            .send(Ok(Fetched {
+                candles: vec![candle(10, 50.0), candle(11, 50.0), candle(12, 50.0)],
+                bars: Vec::new(),
+                series: Vec::new(),
+                yahoo_request_started_ms: Some(12),
+            }))
+            .unwrap();
         chart.inbox = Some(receiver);
         chart.receive_fetch(Timeframe::HOUR_1);
         assert_eq!(open_times(&chart), vec![10, 11, 12]);

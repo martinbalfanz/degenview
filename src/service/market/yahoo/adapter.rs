@@ -14,10 +14,12 @@ const MAX_BARS: usize = 10_000;
 fn is_supported(hit: &Instrument) -> bool {
     if let Some(market) = DataSource::Yahoo.yahoo_derivative(&hit.symbol) {
         return match market {
-            crate::model::YahooDerivative::Forex { .. } => hit.quote_type == "CURRENCY"
-                && hit.exchange_code.as_deref() == Some("CCY"),
-            crate::model::YahooDerivative::Future { exchange, .. } => hit.quote_type == "FUTURE"
-                && hit.exchange_code.as_deref() == Some(exchange),
+            crate::model::YahooDerivative::Forex { .. } => {
+                hit.quote_type == "CURRENCY" && hit.exchange_code.as_deref() == Some("CCY")
+            }
+            crate::model::YahooDerivative::Future { exchange, .. } => {
+                hit.quote_type == "FUTURE" && hit.exchange_code.as_deref() == Some(exchange)
+            }
         };
     }
     if hit.quote_type == "INDEX" {
@@ -56,7 +58,8 @@ pub(super) fn collect_sessions(value: &serde_json::Value, sessions: &mut Vec<(i6
     } else if let (Some(start), Some(end)) = (
         value.get("start").and_then(serde_json::Value::as_i64),
         value.get("end").and_then(serde_json::Value::as_i64),
-    ) && start < end {
+    ) && start < end
+    {
         sessions.push((start, end));
     }
 }
@@ -69,19 +72,30 @@ fn native_bars(chart: Chart, timeframe: Timeframe) -> Result<Vec<Kline>, Provide
     native_bars_with_session(chart, timeframe, false)
 }
 
-fn native_bars_with_session(chart: Chart, timeframe: Timeframe, extended: bool) -> Result<Vec<Kline>, ProviderError> {
+fn native_bars_with_session(
+    chart: Chart,
+    timeframe: Timeframe,
+    extended: bool,
+) -> Result<Vec<Kline>, ProviderError> {
     let meta = chart.meta;
     let index_scale = meta.index_price_scale();
     let derivative = meta.derivative();
     let no_volume = index_scale.is_some() || derivative.is_some_and(|market| !market.has_volume());
-    let scale = index_scale.or_else(|| meta.equity_price_scale()).or_else(|| derivative.map(|_| 1.0)).ok_or_else(|| {
-        ProviderError::other("Yahoo returned an unsupported market or quote currency")
-    })?;
+    let scale = index_scale
+        .or_else(|| meta.equity_price_scale())
+        .or_else(|| derivative.map(|_| 1.0))
+        .ok_or_else(|| {
+            ProviderError::other("Yahoo returned an unsupported market or quote currency")
+        })?;
     let mut sessions = Vec::new();
     if let Some(periods) = &meta.trading_periods {
         collect_sessions(periods.get("regular").unwrap_or(periods), &mut sessions);
     }
-    if let Some(regular) = meta.current_trading_period.as_ref().and_then(|p| p.get("regular")) {
+    if let Some(regular) = meta
+        .current_trading_period
+        .as_ref()
+        .and_then(|p| p.get("regular"))
+    {
         collect_sessions(regular, &mut sessions);
     }
 
@@ -104,7 +118,9 @@ fn native_bars_with_session(chart: Chart, timeframe: Timeframe, extended: bool) 
         let Some(timestamp) = bar.timestamp.checked_mul(1_000) else {
             continue;
         };
-        let open_time = if !timeframe.is_intraday() && let Some(market) = derivative {
+        let open_time = if !timeframe.is_intraday()
+            && let Some(market) = derivative
+        {
             market.trading_day_ms(timestamp)
         } else {
             bucket::bucket_start_ms(timeframe, timestamp)
@@ -166,7 +182,8 @@ fn fetch_range(
     now_ms: i64,
     extended: bool,
 ) -> Result<Vec<Kline>, ProviderError> {
-    let plan = DataSource::Yahoo.plan_for(symbol, timeframe)
+    let plan = DataSource::Yahoo
+        .plan_for(symbol, timeframe)
         .ok_or_else(|| ProviderError::unsupported(DataSource::Yahoo, timeframe))?;
     if plan.is_native() && timeframe == Timeframe::HOUR_1 {
         return fetch_native_hourly(symbol, start_ms, end_ms, max, now_ms, extended);
@@ -182,9 +199,12 @@ fn fetch_range(
         start = start.max(now_ms.saturating_sub(seconds * 1_000).saturating_add(1_000));
     }
     // Overnight daily bars may be stamped on the preceding evening.
-    let vendor_start = if !plan.base().is_intraday() && DataSource::Yahoo.yahoo_derivative(symbol).is_some() {
-        start.saturating_sub(DAY_MS).max(0)
-    } else { start };
+    let vendor_start =
+        if !plan.base().is_intraday() && DataSource::Yahoo.yahoo_derivative(symbol).is_some() {
+            start.saturating_sub(DAY_MS).max(0)
+        } else {
+            start
+        };
     let start_seconds = vendor_start.div_euclid(1_000);
     let end_seconds = end.div_euclid(1_000);
     if end_seconds <= start_seconds {
@@ -232,9 +252,19 @@ fn fetch_native_hourly(
     let Some((request_start, request_end)) = hourly_request_bounds(start, end, now) else {
         return Ok(Vec::new());
     };
-    let response = chart(&symbol.to_uppercase(), Interval::Hour, request_start / 1_000, request_end / 1_000, extended)?;
+    let response = chart(
+        &symbol.to_uppercase(),
+        Interval::Hour,
+        request_start / 1_000,
+        request_end / 1_000,
+        extended,
+    )?;
     let bars = super::hourly::shape(
-        &response, start.max(request_start), request_end, extended, end >= now,
+        &response,
+        start.max(request_start),
+        request_end,
+        extended,
+        end >= now,
         max.min(MAX_BARS),
     )?;
     if end >= now {
@@ -254,7 +284,10 @@ fn shape_range(
 ) -> Result<Vec<Kline>, ProviderError> {
     // Yahoo sometimes includes a forming/latest observation. A historical
     // range must never incorporate a trade from at or after its exclusive end.
-    let derivative = response.meta.derivative().filter(|_| !plan.base().is_intraday());
+    let derivative = response
+        .meta
+        .derivative()
+        .filter(|_| !plan.base().is_intraday());
     response.bars.retain(|bar| {
         bar.timestamp.checked_mul(1_000).is_some_and(|ms| {
             let date = derivative.map_or(ms, |market| market.trading_day_ms(ms));
@@ -280,7 +313,10 @@ impl Yahoo {
         let now = crate::clock::now_ms();
         let count = i64::from(limit).min(MAX_BARS as i64).saturating_add(1);
         let factor = if timeframe.is_intraday() { 8 } else { 2 };
-        let span = timeframe.nominal_ms().saturating_mul(count).saturating_mul(factor);
+        let span = timeframe
+            .nominal_ms()
+            .saturating_mul(count)
+            .saturating_mul(factor);
         let start = now.saturating_sub(span.max(7 * DAY_MS)).max(0);
         let bars = fetch_range(symbol, timeframe, start, now, limit as usize, now, extended)?;
         if bars.is_empty() && limit > 0 {
@@ -385,9 +421,14 @@ mod tests {
     #[test]
     fn yahoo_native_hourly_request_bounds_pad_start_but_respect_retention() {
         let now = 1_000 * DAY_MS;
-        assert_eq!(hourly_request_bounds(now - 3 * DAY_MS + 1_800_000, now - DAY_MS, now),
-            Some((now - 3 * DAY_MS, now - DAY_MS)));
-        assert_eq!(hourly_request_bounds(0, now, now), Some((now - 730 * DAY_MS + 1_000, now)));
+        assert_eq!(
+            hourly_request_bounds(now - 3 * DAY_MS + 1_800_000, now - DAY_MS, now),
+            Some((now - 3 * DAY_MS, now - DAY_MS))
+        );
+        assert_eq!(
+            hourly_request_bounds(0, now, now),
+            Some((now - 730 * DAY_MS + 1_000, now))
+        );
         assert!(hourly_request_bounds(0, now - 731 * DAY_MS, now).is_none());
     }
 
@@ -409,10 +450,7 @@ mod tests {
 
     #[test]
     fn exact_session_close_print_updates_previous_candle() {
-        let mut chart = stock(vec![
-            bar(60, 10.0, Some(100.0)),
-            bar(120, 11.0, Some(0.0)),
-        ]);
+        let mut chart = stock(vec![bar(60, 10.0, Some(100.0)), bar(120, 11.0, Some(0.0))]);
         chart.meta.current_trading_period = Some(serde_json::json!({
             "regular": {"start": 60, "end": 120}
         }));
@@ -429,10 +467,7 @@ mod tests {
 
     #[test]
     fn a_close_print_cannot_update_an_earlier_bar_across_a_gap() {
-        let mut chart = stock(vec![
-            bar(60, 10.0, Some(100.0)),
-            bar(180, 11.0, Some(0.0)),
-        ]);
+        let mut chart = stock(vec![bar(60, 10.0, Some(100.0)), bar(180, 11.0, Some(0.0))]);
         chart.meta.current_trading_period = Some(serde_json::json!({
             "regular": {"start": 60, "end": 180}
         }));
@@ -460,7 +495,10 @@ mod tests {
 
     #[test]
     fn selected_us_indexes_keep_price_history_without_share_volume() {
-        let mut chart = stock(vec![bar(86_400, 100.0, None), bar(172_800, 101.0, Some(123.0))]);
+        let mut chart = stock(vec![
+            bar(86_400, 100.0, None),
+            bar(172_800, 101.0, Some(123.0)),
+        ]);
         chart.meta.symbol = "^IXIC".into();
         chart.meta.instrument_type = Some("INDEX".into());
         let result = native_bars(chart, Timeframe::DAY_1).unwrap();
@@ -484,7 +522,10 @@ mod tests {
         chart.meta.currency = Some("EUR".into());
         chart.meta.exchange_timezone_name = Some("Europe/Berlin".into());
         chart.meta.exchange_name = Some("GER".into());
-        assert_eq!(native_bars(chart.clone(), Timeframe::DAY_1).unwrap()[0].open_time, 86_400_000);
+        assert_eq!(
+            native_bars(chart.clone(), Timeframe::DAY_1).unwrap()[0].open_time,
+            86_400_000
+        );
         chart.meta.exchange_name = Some("FRA".into());
         assert!(native_bars(chart, Timeframe::DAY_1).is_err());
     }

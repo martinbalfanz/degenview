@@ -489,11 +489,9 @@ fn idle(ui: &mut Ui, state: &mut AssetPickerState, outcome: &mut Option<AssetPic
                 PickerTab::Stocks => {
                     let items =
                         STOCK_SUGGESTIONS.map(|ticker| Chip::Logo(ticker, DataSource::Yahoo));
-                    if let Some(index) = suggestions::suggestion_grid(
-                        ui,
-                        tr!("Popular US stocks and ETFs"),
-                        &items,
-                    ) {
+                    if let Some(index) =
+                        suggestions::suggestion_grid(ui, tr!("Popular US stocks and ETFs"), &items)
+                    {
                         search = Some(STOCK_SUGGESTIONS[index]);
                     }
                 }

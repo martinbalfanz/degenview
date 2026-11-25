@@ -30,12 +30,16 @@ impl ChartCard {
             Color32::from_rgba_unmultiplied(150, 75, 225, 18),
         );
         let clipped = painter.with_clip_rect(plot);
-        let intervals = shown.iter().map(|bar| (bar.open_time, bar.close_time.saturating_add(1)))
+        let intervals = shown
+            .iter()
+            .map(|bar| (bar.open_time, bar.close_time.saturating_add(1)))
             .chain(tail.map(|bar| (bar.open_time, bar.end_time)));
         // Merge adjacent same-session spans to avoid seams and unnecessary shapes.
         let mut pending: Option<(f32, f32, Color32)> = None;
         let paint = |left, right, color| {
-            let rect = Rect::from_min_max(Pos2::new(left, plot.top()), Pos2::new(right, plot.bottom())).intersect(plot);
+            let rect =
+                Rect::from_min_max(Pos2::new(left, plot.top()), Pos2::new(right, plot.bottom()))
+                    .intersect(plot);
             if rect.is_positive() {
                 clipped.rect_filled(rect, 0.0, color);
             }
@@ -50,7 +54,8 @@ impl ChartCard {
                 let left = plot.left() + slot_width * (index as f32 + lead + from);
                 let right = plot.left() + slot_width * (index as f32 + lead + to);
                 if let Some((_, previous_right, previous_color)) = pending.as_mut()
-                    && *previous_color == color && (left - *previous_right).abs() < 0.01
+                    && *previous_color == color
+                    && (left - *previous_right).abs() < 0.01
                 {
                     *previous_right = right;
                 } else {
@@ -494,7 +499,15 @@ impl ChartCard {
                 Some(change) if change < 0.0 => self.bearish_color(),
                 _ => theme::text_secondary(),
             };
-            (quote.price, if quote.at_close { crate::i18n::tr!("Close") } else { crate::i18n::tr!("Regular") }, color)
+            (
+                quote.price,
+                if quote.at_close {
+                    crate::i18n::tr!("Close")
+                } else {
+                    crate::i18n::tr!("Regular")
+                },
+                color,
+            )
         });
         let extended = levels.extended.map(|(session, price)| {
             let label = match session {
@@ -502,7 +515,14 @@ impl ChartCard {
                 Session::Post => crate::i18n::tr!("After hours"),
                 Session::Regular => crate::i18n::tr!("Regular"),
             };
-            (price, label, theme::pick(Color32::from_rgb(148, 91, 221), Color32::from_rgb(111, 61, 183)))
+            (
+                price,
+                label,
+                theme::pick(
+                    Color32::from_rgb(148, 91, 221),
+                    Color32::from_rgb(111, 61, 183),
+                ),
+            )
         });
         let mut occupied = fallback_y;
         for (price, label, color) in regular.into_iter().chain(extended) {
@@ -517,22 +537,48 @@ impl ChartCard {
                 tag_y = yahoo_secondary_tag_y(tag_y, other, half, plot);
             }
             occupied = Some(tag_y);
-            canvas::horizontal(painter, (plot.left(), plot.right()), y, canvas::LineStyle {
-                stroke: Stroke::new(1.0, color),
-                dash: crate::model::chart::kind::LineDash::Dotted,
-            });
-            let tag = Rect::from_min_max(Pos2::new(plot.right() + 3.0, tag_y - half), Pos2::new(rect.right() - 3.0, tag_y + half));
+            canvas::horizontal(
+                painter,
+                (plot.left(), plot.right()),
+                y,
+                canvas::LineStyle {
+                    stroke: Stroke::new(1.0, color),
+                    dash: crate::model::chart::kind::LineDash::Dotted,
+                },
+            );
+            let tag = Rect::from_min_max(
+                Pos2::new(plot.right() + 3.0, tag_y - half),
+                Pos2::new(rect.right() - 3.0, tag_y + half),
+            );
             painter.rect_filled(tag, 3.0, color);
-            price_text::paint(painter, tag.center(), Align2::CENTER_CENTER, &scale.tag_label(self.appearance.price_format(), price), style.price_font(), Color32::WHITE);
-            let galley = painter.layout_no_wrap(label.to_owned(), style.price_font(), Color32::WHITE);
+            price_text::paint(
+                painter,
+                tag.center(),
+                Align2::CENTER_CENTER,
+                &scale.tag_label(self.appearance.price_format(), price),
+                style.price_font(),
+                Color32::WHITE,
+            );
+            let galley =
+                painter.layout_no_wrap(label.to_owned(), style.price_font(), Color32::WHITE);
             let left = (plot.right() - galley.size().x - 10.0).max(plot.left());
-            let label_rect = Rect::from_min_max(Pos2::new(left, tag_y - half), Pos2::new(plot.right(), tag_y + half));
+            let label_rect = Rect::from_min_max(
+                Pos2::new(left, tag_y - half),
+                Pos2::new(plot.right(), tag_y + half),
+            );
             if label_rect.width() >= galley.size().x {
                 painter.rect_filled(label_rect, 3.0, color);
-                painter.galley(label_rect.center() - galley.size() / 2.0, galley, Color32::WHITE);
+                painter.galley(
+                    label_rect.center() - galley.size() / 2.0,
+                    galley,
+                    Color32::WHITE,
+                );
             }
             if (tag_y - y).abs() > 0.5 {
-                painter.line_segment([Pos2::new(plot.right(), y), Pos2::new(plot.right(), tag_y)], Stroke::new(1.0, color));
+                painter.line_segment(
+                    [Pos2::new(plot.right(), y), Pos2::new(plot.right(), tag_y)],
+                    Stroke::new(1.0, color),
+                );
             }
         }
     }
@@ -547,7 +593,12 @@ impl ChartCard {
         slot_width: f32,
         preview: crate::model::market::yahoo_preview::Preview,
     ) {
-        let (o, h, l, c) = (scale.y(preview.open), scale.y(preview.high), scale.y(preview.low), scale.y(preview.close));
+        let (o, h, l, c) = (
+            scale.y(preview.open),
+            scale.y(preview.high),
+            scale.y(preview.low),
+            scale.y(preview.close),
+        );
         if ![o, h, l, c, x].into_iter().all(f32::is_finite) || !plot.x_range().contains(x) {
             return;
         }
@@ -557,7 +608,13 @@ impl ChartCard {
         let top = o.min(c);
         let bottom = o.max(c).max(top + 1.0);
         let body = Rect::from_min_max(Pos2::new(x - half, top), Pos2::new(x + half, bottom));
-        let corners = [body.left_top(), body.right_top(), body.right_bottom(), body.left_bottom(), body.left_top()];
+        let corners = [
+            body.left_top(),
+            body.right_top(),
+            body.right_bottom(),
+            body.left_bottom(),
+            body.left_top(),
+        ];
         painter.extend(Shape::dashed_line(&corners, stroke, 2.0, 2.0));
     }
 

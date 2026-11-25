@@ -2,8 +2,8 @@
 //! bars on the work queue, latest request first.
 
 use super::super::SessionSecurityDataProvider;
-use crate::model::market::yahoo_session::PolicySnapshot;
 use crate::model::Kline;
+use crate::model::market::yahoo_session::PolicySnapshot;
 use crate::pine::compiler::program::{ChartTheme, InputValue, SymbolInfo, VisualOutput};
 use crate::pine::logs::LogBatch;
 use crate::pine::runtime::execution::ExecutionController;
@@ -136,7 +136,9 @@ impl PineWorker {
                         request.visible_range,
                         Limits::default(),
                         &LibraryRegistry,
-                        Some(Box::new(SessionSecurityDataProvider::new(config.session_policy))),
+                        Some(Box::new(SessionSecurityDataProvider::new(
+                            config.session_policy,
+                        ))),
                         Some(Arc::clone(&cancellation)),
                     ) {
                         Ok(controller) => {

@@ -4,8 +4,8 @@
 //! An explicit non-USD currency is rejected; the quote engine requires a
 //! validated REST snapshot before any tick can affect an instrument.
 use super::StreamTick;
-use crate::model::{DataSource, encoding};
 use crate::model::watchlist::quote::{SourceQuote, VolumeKind};
+use crate::model::{DataSource, encoding};
 use crate::service::net::ws::{Keepalive, Session};
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -78,7 +78,9 @@ fn decode(mut input: &[u8]) -> Option<Pricing<'_>> {
                     _ => {}
                 }
             }
-            1 => { take(&mut input, 8)?; }
+            1 => {
+                take(&mut input, 8)?;
+            }
             2 => {
                 let len = usize::try_from(varint(&mut input)?).ok()?;
                 let value = take(&mut input, len)?;
@@ -121,17 +123,29 @@ fn parse_tick_with_session(text: &str, extended: bool) -> Option<StreamTick> {
     let data = payload(text)?;
     let pricing = decode(&data)?;
     let symbol = pricing.symbol?;
-    let price = pricing.price.filter(|price| price.is_finite() && *price > 0.0)?;
+    let price = pricing
+        .price
+        .filter(|price| price.is_finite() && *price > 0.0)?;
     let timestamp = pricing.timestamp.filter(|timestamp| *timestamp > 0)?;
-    if !DataSource::Yahoo.yahoo_stream_symbol(symbol) || pricing.currency.is_some_and(|currency| currency != "USD")
-        || !crate::model::market::yahoo_session::admits_wire_session(pricing.session, timestamp, extended)
+    if !DataSource::Yahoo.yahoo_stream_symbol(symbol)
+        || pricing.currency.is_some_and(|currency| currency != "USD")
+        || !crate::model::market::yahoo_session::admits_wire_session(
+            pricing.session,
+            timestamp,
+            extended,
+        )
     {
         return None;
     }
     // Extended-session cumulative volume is not the regular session's share volume.
     let volume = if pricing.session == Some(1) {
-        pricing.volume.filter(|volume| *volume >= 0).map(|volume| volume as f64)
-    } else { None };
+        pricing
+            .volume
+            .filter(|volume| *volume >= 0)
+            .map(|volume| volume as f64)
+    } else {
+        None
+    };
     Some(StreamTick {
         source: DataSource::Yahoo,
         product_id: symbol.to_ascii_uppercase(),
@@ -154,33 +168,49 @@ mod tests {
         bytes.extend_from_slice(&123.5f32.to_le_bytes());
         bytes.push(24);
         let mut stamp = (timestamp as u64) << 1;
-        while stamp >= 128 { bytes.push((stamp as u8 & 0x7f) | 0x80); stamp >>= 7; }
+        while stamp >= 128 {
+            bytes.push((stamp as u8 & 0x7f) | 0x80);
+            stamp >>= 7;
+        }
         bytes.push(stamp as u8);
         if let Some(currency) = currency {
             bytes.extend_from_slice(&[34, currency.len() as u8]);
             bytes.extend_from_slice(currency.as_bytes());
         }
-        if let Some(session) = session { bytes.extend_from_slice(&[56, session]); }
+        if let Some(session) = session {
+            bytes.extend_from_slice(&[56, session]);
+        }
         bytes.extend_from_slice(&[72, 20]);
         json!({"message": encoding::base64_encode(&bytes)}).to_string()
     }
 
-    fn premarket_timestamp() -> i64 { 1795607849000 }
+    fn premarket_timestamp() -> i64 {
+        1795607849000
+    }
 
     #[test]
     fn pricing_data_allows_sparse_currency_but_checks_explicit_currency_and_session() {
         let timestamp = crate::pine::time::calendar::make(2026, 11, 25, 15, 0, 0, 0).unwrap();
-        let tick = parse_tick_with_session(&message(Some(1), timestamp, Some("USD")), false).unwrap();
+        let tick =
+            parse_tick_with_session(&message(Some(1), timestamp, Some("USD")), false).unwrap();
         assert_eq!(tick.product_id, "NVDA");
         assert_eq!(tick.quote.price, 123.5);
         assert_eq!(tick.quote.timestamp_ms, Some(timestamp));
         assert_eq!(tick.quote.volume_24h, Some(10.0));
         assert!(parse_tick_with_session(&message(Some(1), timestamp, None), false).is_some());
-        assert!(parse_tick_with_session(&message(Some(1), timestamp, Some("EUR")), false).is_none());
+        assert!(
+            parse_tick_with_session(&message(Some(1), timestamp, Some("EUR")), false).is_none()
+        );
         // Observed live payload: PRE, price and vendor time, no currency/volume.
-        assert!(parse_tick_with_session(&message(Some(0), premarket_timestamp(), None), true).is_some());
-        assert!(parse_tick_with_session(&message(Some(0), timestamp, Some("USD")), false).is_none());
-        assert!(parse_tick_with_session(&message(Some(2), timestamp, Some("USD")), false).is_none());
+        assert!(
+            parse_tick_with_session(&message(Some(0), premarket_timestamp(), None), true).is_some()
+        );
+        assert!(
+            parse_tick_with_session(&message(Some(0), timestamp, Some("USD")), false).is_none()
+        );
+        assert!(
+            parse_tick_with_session(&message(Some(2), timestamp, Some("USD")), false).is_none()
+        );
         let pre = timestamp - 3 * 3_600_000;
         assert!(parse_tick_with_session(&message(None, pre, None), false).is_none());
         let tick = parse_tick_with_session(&message(None, pre, None), true).unwrap();
@@ -196,7 +226,10 @@ mod tests {
     fn subscription_is_one_json_message() {
         let session = session(&["NVDA".into(), "SPY".into()]);
         assert_eq!(session.url, "wss://streamer.finance.yahoo.com/?version=2");
-        assert_eq!(serde_json::from_str::<Value>(&session.subscribe[0]).unwrap(), json!({"subscribe":["NVDA","SPY"]}));
+        assert_eq!(
+            serde_json::from_str::<Value>(&session.subscribe[0]).unwrap(),
+            json!({"subscribe":["NVDA","SPY"]})
+        );
     }
 
     // This intentionally uses one direct connection, not the reconnecting
@@ -207,18 +240,29 @@ mod tests {
         use std::time::Instant;
         use tungstenite::Message;
         let now = crate::clock::now_ms();
-        let wanted = |ts| if extended_only {
-            matches!(session_at(ts), Some(TradingSession::Pre | TradingSession::Post))
-        } else {
-            session_at(ts) == Some(TradingSession::Regular)
+        let wanted = |ts| {
+            if extended_only {
+                matches!(
+                    session_at(ts),
+                    Some(TradingSession::Pre | TradingSession::Post)
+                )
+            } else {
+                session_at(ts) == Some(TradingSession::Regular)
+            }
         };
-        assert!(wanted(now), "Wrong US session for this test: {:?}. Use the matching regular/extended test.", session_at(now));
+        assert!(
+            wanted(now),
+            "Wrong US session for this test: {:?}. Use the matching regular/extended test.",
+            session_at(now)
+        );
         let session = session(&["NVDA".into(), "SPY".into(), "TSLA".into()]);
         let (mut socket, route) = connect(&session.url, &session.host, session.port)
             .expect("Yahoo WebSocket handshake failed");
         println!("Yahoo WebSocket handshake OK");
         for message in &session.subscribe {
-            socket.send(Message::Text(message.as_str().into())).expect("Yahoo subscribe failed");
+            socket
+                .send(Message::Text(message.as_str().into()))
+                .expect("Yahoo subscribe failed");
         }
         println!("Subscribed to NVDA, SPY, TSLA");
         let mut health = Health::new(session.max_data_silence, session.keepalive, route);
@@ -226,14 +270,18 @@ mod tests {
         let mut frames = 0;
         let mut decoded = 0;
         while started.elapsed() < Duration::from_secs(90) {
-            let frame = health.read(&mut socket).expect("Yahoo WebSocket read failed");
+            let frame = health
+                .read(&mut socket)
+                .expect("Yahoo WebSocket read failed");
             let text = match &frame {
                 Some(Message::Text(text)) => text.as_str(),
                 Some(Message::Binary(bytes)) => match std::str::from_utf8(bytes) {
                     Ok(text) => text,
                     Err(_) => {
                         frames += 1;
-                        if frames <= 8 { println!("Non-UTF8 binary frame: {} bytes", bytes.len()); }
+                        if frames <= 8 {
+                            println!("Non-UTF8 binary frame: {} bytes", bytes.len());
+                        }
                         continue;
                     }
                 },
@@ -246,20 +294,34 @@ mod tests {
             {
                 decoded += 1;
                 if frames <= 8 {
-                    println!("Decoded PricingData: {pricing:?}; timestamp session: {:?}", pricing.timestamp.and_then(session_at));
+                    println!(
+                        "Decoded PricingData: {pricing:?}; timestamp session: {:?}",
+                        pricing.timestamp.and_then(session_at)
+                    );
                 }
             } else if frames <= 8 {
-                println!("Unrecognized message ({} bytes); JSON fields: {:?}", text.len(), serde_json::from_str::<Value>(text).ok().and_then(|v| v.as_object().map(|obj| obj.keys().cloned().collect::<Vec<_>>())));
+                println!(
+                    "Unrecognized message ({} bytes); JSON fields: {:?}",
+                    text.len(),
+                    serde_json::from_str::<Value>(text).ok().and_then(|v| v
+                        .as_object()
+                        .map(|obj| obj.keys().cloned().collect::<Vec<_>>()))
+                );
             }
             if let Some(tick) = parse_tick_with_session(text, extended_only)
                 && tick.quote.timestamp_ms.is_some_and(wanted)
                 && ["NVDA", "SPY", "TSLA"].contains(&tick.product_id.as_str())
             {
-                println!("Accepted {}: {} at {:?}", tick.product_id, tick.quote.price, tick.quote.timestamp_ms);
+                println!(
+                    "Accepted {}: {} at {:?}",
+                    tick.product_id, tick.quote.price, tick.quote.timestamp_ms
+                );
                 return;
             }
         }
-        panic!("Yahoo sent {frames} frames ({decoded} decoded PricingData) but no accepted session tick in 90s");
+        panic!(
+            "Yahoo sent {frames} frames ({decoded} decoded PricingData) but no accepted session tick in 90s"
+        );
     }
 
     #[test]

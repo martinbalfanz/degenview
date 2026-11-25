@@ -191,7 +191,10 @@ fn yahoo_session_revision_discards_applied_script_output_and_restarts_worker() {
     let mut runs = ChartRuns::default();
     wait(&mut runs, &frame(&bars, &symbol), &instances, 1);
     let epoch = runs.logs(1).unwrap().epoch;
-    let policy = PolicySnapshot { extended: false, revision: 2 };
+    let policy = PolicySnapshot {
+        extended: false,
+        revision: 2,
+    };
     let shown = runs.update_with_policy(&ctx, &frame(&bars, &symbol), &instances, policy);
     assert!(shown.is_empty());
     assert!(runs.logs(1).unwrap().epoch > epoch);

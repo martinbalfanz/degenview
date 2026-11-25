@@ -350,9 +350,13 @@ impl ChartCard {
         let shown = &bars[view.start..view.end];
         // Only the series painter and the last-price tag see this copy.
         // Indicators, volume, projections, Pine, replay and snapshots keep REST data.
-        let preview = data.preview.and_then(|preview| {
-            view.preview_index(bars, plot, preview).map(|index| (preview, index))
-        }).filter(|_| decor.indicative_quote && !decor.replay_active);
+        let preview = data
+            .preview
+            .and_then(|preview| {
+                view.preview_index(bars, plot, preview)
+                    .map(|index| (preview, index))
+            })
+            .filter(|_| decor.indicative_quote && !decor.replay_active);
         let painted = preview.map(|(preview, index)| {
             let mut painted = shown.to_vec();
             if index == shown.len() {
@@ -425,7 +429,11 @@ impl ChartCard {
             && crate::model::market::yahoo_session::extended_candles(data.source, data.symbol, tf)
         {
             self.draw_yahoo_session_background(
-                &main_painter, plot, shown, slot_width, lead,
+                &main_painter,
+                plot,
+                shown,
+                slot_width,
+                lead,
                 preview.and_then(|(bar, index)| (index == shown.len()).then_some(bar)),
             );
         }
@@ -453,7 +461,9 @@ impl ChartCard {
                 ),
                 None => data.source.display_name().to_owned(),
             };
-            if self.timeframe.is_some_and(|tf| crate::model::market::yahoo_session::extended_candles(data.source, data.symbol, tf)) {
+            if self.timeframe.is_some_and(|tf| {
+                crate::model::market::yahoo_session::extended_candles(data.source, data.symbol, tf)
+            }) {
                 subtitle.push_str(&format!(" · {}", tr!("Extended hours")));
             }
             if let Some(market) = data.source.yahoo_market(data.symbol) {
@@ -524,7 +534,14 @@ impl ChartCard {
                 price_format: self.appearance.price_format(),
             });
             if let Some((preview, index)) = preview {
-                self.draw_yahoo_preview_border(&clipped, plot, scale, x_for(index), slot_width, preview);
+                self.draw_yahoo_preview_border(
+                    &clipped,
+                    plot,
+                    scale,
+                    x_for(index),
+                    slot_width,
+                    preview,
+                );
             }
         }
 
@@ -582,8 +599,15 @@ impl ChartCard {
             Default::default()
         };
         let regular = levels.regular;
-        let ordinary_price = tag_candles.as_deref().unwrap_or(candles).last().map(|bar| bar.close);
-        let draw_default = regular.is_none() && !levels.extended.is_some_and(|(_, price)| ordinary_price == Some(price));
+        let ordinary_price = tag_candles
+            .as_deref()
+            .unwrap_or(candles)
+            .last()
+            .map(|bar| bar.close);
+        let draw_default = regular.is_none()
+            && !levels
+                .extended
+                .is_some_and(|(_, price)| ordinary_price == Some(price));
         if draw_default {
             self.draw_last_price(
                 &main_painter,
@@ -595,11 +619,14 @@ impl ChartCard {
                 style,
             );
         }
-        let main_tag_y = regular.map(|quote| scale.y(quote.price))
+        let main_tag_y = regular
+            .map(|quote| scale.y(quote.price))
             .or_else(|| preview.map(|(bar, _)| scale.y(bar.close)))
             .or_else(|| candles.last().map(|last| scale.y(last.close)));
-        if levels.extended.is_none() && regular.is_none()
-            && decor.indicative_quote && !decor.replay_active
+        if levels.extended.is_none()
+            && regular.is_none()
+            && decor.indicative_quote
+            && !decor.replay_active
             && data.source.yahoo_stream_symbol(data.symbol)
             && view.end == bars.len()
             && preview.is_none()
@@ -617,7 +644,15 @@ impl ChartCard {
             style,
             main_tag_y,
         );
-        self.draw_yahoo_session_levels(&main_painter, plot, rect, scale, style, levels, draw_default.then_some(main_tag_y).flatten());
+        self.draw_yahoo_session_levels(
+            &main_painter,
+            plot,
+            rect,
+            scale,
+            style,
+            levels,
+            draw_default.then_some(main_tag_y).flatten(),
+        );
         self.draw_time_axis(painter, rect, shown, &ticks, &x_for, plot.right(), style);
         // The tags of the lines at a price or a time sit on the axes, which the drawings'
         // clipped painter cannot reach.
@@ -768,7 +803,16 @@ impl ChartCard {
                 && index == shown.len()
                 && ((x - plot.left()) / slot_width - lead).floor() == index as f32
             {
-                self.draw_yahoo_preview_hover(painter, plot, rect, x, style, preview, crosshair.frozen, main_visible);
+                self.draw_yahoo_preview_hover(
+                    painter,
+                    plot,
+                    rect,
+                    x,
+                    style,
+                    preview,
+                    crosshair.frozen,
+                    main_visible,
+                );
             }
         }
 

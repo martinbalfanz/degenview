@@ -107,7 +107,11 @@ impl KlineSecurityDataProvider {
         }
         // Native hourly starts are not on the UTC grid. The adapter pads the
         // provider request and keeps only complete native bars in this span.
-        let start = if native_hourly { start } else { intrabar_start(target, start) };
+        let start = if native_hourly {
+            start
+        } else {
+            intrabar_start(target, start)
+        };
         let candles = while_transient(&INTRABAR_RETRY_DELAYS, || {
             crate::service::fetch_klines_range_with_session(
                 source,
@@ -122,7 +126,11 @@ impl KlineSecurityDataProvider {
         if candles.is_empty() {
             return Ok(None);
         }
-        let candles = if native_hourly { candles } else { fold_intrabars(plan, candles) };
+        let candles = if native_hourly {
+            candles
+        } else {
+            fold_intrabars(plan, candles)
+        };
         Ok(Some(construct(modifier, candles)))
     }
 
@@ -177,9 +185,10 @@ impl SecurityDataProvider for SessionSecurityDataProvider {
         }
         let finer = (key.interval * 1_000.0) < chart.spacing_ms as f64;
         let candles = if finer {
-            intrabars_or_series(KlineSecurityDataProvider::intrabars(key, chart, extended), || {
-                KlineSecurityDataProvider::series(key, Some(chart), extended)
-            })?
+            intrabars_or_series(
+                KlineSecurityDataProvider::intrabars(key, chart, extended),
+                || KlineSecurityDataProvider::series(key, Some(chart), extended),
+            )?
         } else {
             KlineSecurityDataProvider::series(key, Some(chart), extended)?
         };
@@ -302,7 +311,9 @@ pub fn run_script_checked_in_range(
         Limits::default(),
         None,
         symbol.clone(),
-        Some(Box::new(SessionSecurityDataProvider::new(yahoo_session::snapshot()))),
+        Some(Box::new(SessionSecurityDataProvider::new(
+            yahoo_session::snapshot(),
+        ))),
         visible_range,
     );
     // History loads the way the Swift controller does: the bar length and last bar index are

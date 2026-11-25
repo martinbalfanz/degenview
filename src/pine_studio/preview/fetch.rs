@@ -24,7 +24,9 @@ impl PreviewState {
             return false;
         }
         let current = policy.effective(self.market.source, &self.market.ticker, self.timeframe);
-        let previous = self.session_policy.effective(self.market.source, &self.market.ticker, self.timeframe);
+        let previous =
+            self.session_policy
+                .effective(self.market.source, &self.market.ticker, self.timeframe);
         if current != previous {
             self.inbox = None;
             self.fetched_for = None;
@@ -33,7 +35,10 @@ impl PreviewState {
             self.error = None;
             self.set_candles(Vec::new());
             if let Some(candles) = service::cache::peek_yahoo_session(
-                &self.market.ticker, self.timeframe, CANDLE_LIMIT, current.extended,
+                &self.market.ticker,
+                self.timeframe,
+                CANDLE_LIMIT,
+                current.extended,
             ) {
                 self.set_candles(candles);
             }
@@ -60,9 +65,18 @@ impl PreviewState {
         }
         let market = self.market.clone();
         let timeframe = self.timeframe;
-        let extended = self.session_policy.effective(market.source, &market.ticker, timeframe).extended;
+        let extended = self
+            .session_policy
+            .effective(market.source, &market.ticker, timeframe)
+            .extended;
         self.inbox = Some(work_queue::start_for(market.source, Some(ctx), move || {
-            service::fetch_klines_with_session(market.source, &market.ticker, timeframe, CANDLE_LIMIT, extended)
+            service::fetch_klines_with_session(
+                market.source,
+                &market.ticker,
+                timeframe,
+                CANDLE_LIMIT,
+                extended,
+            )
         }));
         self.loading = true;
         self.last_fetch = Some(Instant::now());

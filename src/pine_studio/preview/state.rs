@@ -235,7 +235,9 @@ impl PreviewState {
         now_ms: i64,
         light: bool,
     ) -> Option<crate::pine_studio::debug::DebugFeed> {
-        if self.candles.is_empty() || self.session_policy != crate::model::market::yahoo_session::snapshot() {
+        if self.candles.is_empty()
+            || self.session_policy != crate::model::market::yahoo_session::snapshot()
+        {
             return None;
         }
         Some(crate::pine_studio::debug::DebugFeed {
