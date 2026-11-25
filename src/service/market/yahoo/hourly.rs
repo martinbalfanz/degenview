@@ -72,20 +72,22 @@ pub(super) fn shape(
         if !(start_ms..end_ms).contains(&open_time) {
             continue;
         }
-        let Some(volume) = bar.volume else {
-            return Err(ProviderError::data(format!("Missing native hourly volume field at {}", bar.timestamp)));
-        };
         let period = match period_at(&periods, bar.timestamp)? {
             Some(period) => period,
             None => {
-                // A zero-volume flat print precisely at regular close is
-                // not a new regular-session candle. Keep existing close-print
-                // semantics without crossing a gap or changing volume.
-                if !extended && volume == 0.0 && bar.open == bar.close
-                    && bar.high == bar.close && bar.low == bar.close
-                    && periods.iter().any(|period| period.session == Session::Regular && period.end == bar.timestamp)
-                {
-                    if let Some(last) = out.last_mut().filter(|last| last.close_time.checked_add(1) == Some(open_time)) {
+                // Yahoo can append an extra row exactly at regular close,
+                // including on shortened days. It is not an hourly candle
+                // in the requested regular session. Only the already supported
+                // flat, explicitly zero-volume close print may correct the
+                // adjacent final bar. Other boundary rows are ambiguous:
+                // discard them without absorbing OHLC or volume.
+                if !extended && periods.iter().any(|period| {
+                    period.session == Session::Regular && period.end == bar.timestamp
+                }) {
+                    if bar.volume == Some(0.0) && bar.open == bar.close
+                        && bar.high == bar.close && bar.low == bar.close
+                        && let Some(last) = out.last_mut().filter(|last| last.close_time.checked_add(1) == Some(open_time))
+                    {
                         last.high = last.high.max(bar.close);
                         last.low = last.low.min(bar.close);
                         last.close = bar.close;
@@ -94,6 +96,9 @@ pub(super) fn shape(
                 }
                 return Err(ProviderError::data(format!("No Yahoo hourly trading period for {}", bar.timestamp)));
             }
+        };
+        let Some(volume) = bar.volume else {
+            return Err(ProviderError::data(format!("Missing native hourly volume field at {}", bar.timestamp)));
         };
         if (bar.timestamp - period.start).rem_euclid(HOUR) != 0 {
             return Err(ProviderError::data(format!("Unexpected Yahoo hourly anchor at {}", bar.timestamp)));
@@ -168,6 +173,33 @@ mod tests {
         let mut chart = fixture();
         chart.bars[1].volume = None;
         assert!(shape(&chart, 0, 10_800_000, true, false, 100).is_err());
+    }
+
+    #[test]
+    fn yahoo_native_hourly_shape_ignores_ambiguous_close_boundary_rows_only_in_regular_mode() {
+        let chart = fixture();
+        // The final row has a range and is timestamped at the regular close.
+        // In regular mode it is not a valid additional candle, even if Yahoo
+        // supplied volume; in extended mode it is the first postmarket bar.
+        for volume in [Some(0.0), Some(500.0), None] {
+            let mut chart = chart.clone();
+            chart.bars.remove(0);
+            chart.bars.last_mut().unwrap().volume = volume;
+            let regular = shape(&chart, 0, 10_800_000, false, false, 100).unwrap();
+            assert_eq!(regular.len(), 2);
+            assert_eq!((regular[1].close_time, regular[1].close, regular[1].volume), (7_199_999, 103.0, 200.0));
+            if let Some(volume) = volume {
+                let extended = shape(&chart, 0, 10_800_000, true, false, 100).unwrap();
+                assert_eq!(extended.len(), 3);
+                assert_eq!((extended[2].open_time, extended[2].volume), (7_200_000, volume));
+            }
+        }
+        // An unknown timestamp elsewhere is still rejected: do not turn a
+        // general metadata failure into silently missing history.
+        let mut unknown = chart;
+        unknown.bars.remove(0);
+        unknown.bars.last_mut().unwrap().timestamp += 60;
+        assert!(shape(&unknown, 0, 10_800_000, false, false, 100).is_err());
     }
 
     #[test]

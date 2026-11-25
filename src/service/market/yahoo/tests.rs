@@ -318,6 +318,9 @@ fn live_yahoo_native_hourly_shape_contract() {
         ] {
             let raw = chart("NVDA", Interval::Hour, start, end, extended).expect("native hourly chart");
             println!("{name} extended={extended} raw={} period metadata={:?}", raw.bars.len(), raw.meta.trading_periods);
+            if name == "short-day" {
+                print_hourly_samples("short-day raw rows", &raw);
+            }
             match hourly::shape(&raw, start * 1000, end * 1000, extended, false, 10_000) {
                 Ok(bars) => {
                     let mut spans = std::collections::BTreeMap::new();
