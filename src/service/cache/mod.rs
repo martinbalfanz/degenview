@@ -641,7 +641,7 @@ mod tests {
         }).unwrap();
         assert_eq!(bars, series(0..2));
         assert_eq!(started, 12345);
-        forget_where(|candidate| candidate == &key);
+        forget_where(|candidate| candidate == key);
     }
 
     #[test]
@@ -681,10 +681,10 @@ mod tests {
         };
         assert_eq!(peek(false), Some(regular));
         assert_eq!(peek(true), Some(extended));
-        forget_where(|key| key == &extended_key);
+        forget_where(|key| key == extended_key);
         assert!(peek_yahoo_session(symbol, timeframe, 2, true).is_none());
         assert_eq!(peek(false), Some(series(1..3)));
-        forget_where(|key| key == &regular_key);
+        forget_where(|key| key == regular_key);
     }
 
     #[test]
