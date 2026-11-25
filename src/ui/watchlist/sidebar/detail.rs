@@ -25,7 +25,7 @@ const DETAIL_NOTE: f32 = 28.0;
 const DETAIL_GAP: f32 = 10.0;
 
 /// The card's height: its bands are fixed, so only a provider's note changes it.
-pub(super) fn detail_height(quote: Option<&WatchlistQuote>) -> f32 {
+pub(super) fn detail_height(quote: Option<&WatchlistQuote>, extended: bool) -> f32 {
     let note = quote.is_some_and(|quote| quote.note.is_some());
     DETAIL_PAD * 2.0
         + DETAIL_HEADER
@@ -35,6 +35,7 @@ pub(super) fn detail_height(quote: Option<&WatchlistQuote>) -> f32 {
         + DETAIL_LISTS
         + DETAIL_GAP * 3.0
         + if note { DETAIL_NOTE + DETAIL_GAP } else { 0.0 }
+        + if extended { DETAIL_TILE + DETAIL_GAP } else { 0.0 }
 }
 
 /// Paints `text` as a capsule centred on `center_y` with its right edge at `right`, and returns
@@ -147,9 +148,10 @@ pub(super) fn detail_panel(
     };
     let quote = (input.quote)(&item.instrument);
     let quote = quote.as_ref();
+    let extended = (input.extended_quote)(&item.instrument);
     let source = item.instrument.source;
     let (card, _) = ui.allocate_exact_size(
-        Vec2::new(ui.available_width(), detail_height(quote)),
+        Vec2::new(ui.available_width(), detail_height(quote, extended.is_some())),
         Sense::hover(),
     );
     ui.painter().rect_filled(card, 0.0, theme::chrome());
@@ -276,6 +278,31 @@ pub(super) fn detail_panel(
         );
     }
     y += DETAIL_HERO + DETAIL_GAP;
+
+    // The secondary price and change have their own regular-close reference.
+    if let Some(extended) = extended.as_ref() {
+        use crate::model::market::yahoo_session::{Session, session_at};
+        let label = match extended.timestamp_ms.and_then(session_at) {
+            Some(Session::Pre) => tr!("Premarket"),
+            Some(Session::Post) => tr!("After hours"),
+            _ => tr!("Extended hours"),
+        };
+        let price = watchlist::quote::last_text(Some(extended), Some(source));
+        let percent = watchlist::quote::percent_text(Some(extended), Some(source));
+        let ink = match watchlist::quote::direction(Some(extended)) {
+            Direction::Up => theme::UP,
+            Direction::Down => theme::DOWN,
+            Direction::Flat => theme::text_secondary(),
+        };
+        let rect = Rect::from_min_size(Pos2::new(left, y), Vec2::new(width, DETAIL_TILE));
+        ui.painter().rect_filled(rect, 8.0, theme::ink(8));
+        let caption = kit::galley(ui, label, 10.0, kit::MEDIUM, theme::text_secondary(), width - 20.0);
+        ui.painter().galley(Pos2::new(left + 10.0, y + 4.0), caption, theme::text_secondary());
+        let pill = detail_pill(ui, right - 8.0, y + 24.0, &percent, ink, theme::with_alpha(ink, 0.14), None);
+        let value = kit::digits(ui, &price, 14.0, kit::SEMIBOLD, theme::text_primary(), (pill.left() - left - 18.0).max(20.0));
+        ui.painter().galley(Pos2::new(left + 10.0, y + 18.0), value, theme::text_primary());
+        y += DETAIL_TILE + DETAIL_GAP;
+    }
 
     // The facts, two to a row.
     let freshness = quote.map_or(Freshness::Unavailable, |quote| quote.freshness);

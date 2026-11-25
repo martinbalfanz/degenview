@@ -54,8 +54,12 @@ impl ChartWorkspace {
             let observation = if active && chart.is_market() && chart.source.yahoo_stream_symbol(&chart.symbol) {
                 chart.candles.last().and_then(|last| {
                     let instrument = InstrumentId::new(chart.source, &chart.symbol);
-                    let quote = self.quote_book.get(&instrument)?;
                     let extended = crate::model::market::yahoo_session::extended_candles(chart.source, &chart.symbol, self.timeframe);
+                    let quote = if extended && matches!(crate::model::market::yahoo_session::session_at(now), Some(crate::model::market::yahoo_session::Session::Pre | crate::model::market::yahoo_session::Session::Post)) {
+                        self.quote_book.get_extended(&instrument)?
+                    } else {
+                        self.quote_book.get(&instrument)?
+                    };
                     let price = indicative_yahoo_price(&quote, last, now, extended)?;
                     Some(Observation { price, timestamp_ms: quote.timestamp_ms? })
                 })

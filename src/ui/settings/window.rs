@@ -815,7 +815,7 @@ fn section_yahoo(
             ui,
             Icon::ChartLine,
             tr!("Extended hours"),
-            Some(tr!("Include US stock and ETF premarket and after-hours data on intraday charts and watchlist quotes. Changes apply without restarting.")),
+            Some(tr!("Include US stock and ETF premarket and after-hours data on intraday charts. Changes apply without restarting.")),
             |ui| {
                 if card::switch(ui, &mut enabled) {
                     actions.push(SettingsAction::SetYahooExtendedHours(enabled));

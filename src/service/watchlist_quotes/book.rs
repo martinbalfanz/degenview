@@ -1,5 +1,4 @@
-use crate::model::{DataSource, InstrumentId};
-use crate::model::market::yahoo_session;
+use crate::model::InstrumentId;
 use crate::model::watchlist::quote::WatchlistQuote;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,7 +15,7 @@ pub struct WatchlistQuoteBook {
 struct Inner {
     quotes: RwLock<HashMap<String, WatchlistQuote>>,
     revision: AtomicU64,
-    yahoo_revision: AtomicU64,
+    extended: RwLock<HashMap<String, WatchlistQuote>>,
 }
 
 impl WatchlistQuoteBook {
@@ -25,13 +24,28 @@ impl WatchlistQuoteBook {
     }
 
     pub fn get_by_key(&self, key: &str) -> Option<WatchlistQuote> {
-        let quotes = self.inner.quotes.read().ok()?;
-        if key.split_once(':').is_some_and(|(source, symbol)| {
-            source == DataSource::Yahoo.watchlist_slug() && DataSource::Yahoo.yahoo_stream_symbol(symbol)
-        }) && self.inner.yahoo_revision.load(Ordering::Acquire) != yahoo_session::snapshot().revision {
-            return None;
+        self.inner.quotes.read().ok()?.get(key).cloned()
+    }
+
+    /// Secondary pre/post observation, never the sortable regular price.
+    pub fn get_extended(&self, instrument: &InstrumentId) -> Option<WatchlistQuote> {
+        self.inner.extended.read().ok()?.get(&instrument.key()).cloned()
+    }
+
+    pub(super) fn replace_extended(&self, updates: HashMap<String, WatchlistQuote>) {
+        let Ok(mut quotes) = self.inner.extended.write() else { return };
+        if *quotes != updates {
+            *quotes = updates;
+            self.inner.revision.fetch_add(1, Ordering::AcqRel);
         }
-        quotes.get(key).cloned()
+    }
+
+    pub(super) fn remove_extended(&self, key: &str) {
+        if let Ok(mut quotes) = self.inner.extended.write()
+            && quotes.remove(key).is_some()
+        {
+            self.inner.revision.fetch_add(1, Ordering::AcqRel);
+        }
     }
 
     /// Bumps whenever any quote changes, so a sorted list knows when to re-sort.
@@ -47,19 +61,13 @@ impl WatchlistQuoteBook {
         let before = quotes.len();
         for key in keys {
             quotes.remove(key);
+            self.remove_extended(key);
         }
         let changed = quotes.len() != before;
         if changed {
             self.inner.revision.fetch_add(1, Ordering::AcqRel);
         }
         changed
-    }
-
-    /// Restore the baseline before allowing reads for the new policy revision.
-    pub(super) fn apply_yahoo_session(&self, updates: HashMap<String, WatchlistQuote>, revision: u64) {
-        self.apply(updates);
-        self.inner.yahoo_revision.store(revision, Ordering::Release);
-        self.inner.revision.fetch_add(1, Ordering::AcqRel);
     }
 
     /// Replaces quotes for the given keys; an unchanged quote does not count as a change.
