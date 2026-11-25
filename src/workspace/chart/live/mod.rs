@@ -432,6 +432,7 @@ mod tests {
                 candles: vec![fetched],
                 bars: Vec::new(),
                 series: Vec::new(),
+                yahoo_request_started_ms: None,
             }))
             .unwrap();
         chart.inbox = Some(receiver);
@@ -495,6 +496,7 @@ mod tests {
                 }],
                 bars,
                 series: Vec::new(),
+                yahoo_request_started_ms: None,
             }))
             .unwrap();
         chart.inbox = Some(receiver);
