@@ -29,6 +29,16 @@ impl Provisional {
         self.rest_floor = None;
     }
 
+    /// A revision to completed history may have changed its price scale.
+    /// Reject previously observed samples and, conservatively, observations
+    /// no newer than the request that exposed the change.
+    pub(in crate::workspace) fn discard_samples(&mut self, request_started_ms: Option<i64>) {
+        self.sampled = None;
+        if let Some(started) = request_started_ms {
+            self.observed_through = Some(self.observed_through.map_or(started, |seen| seen.max(started)));
+        }
+    }
+
     fn sync_rest(&mut self, tf: Timeframe, last: &Kline) -> bool {
         // The provider has no true trade watermark. A changed REST bar is an
         // authoritative correction, so discard old sampled extrema and do not

@@ -711,6 +711,14 @@ fn receive_fetch(series: &mut Series, timeframe: Timeframe, now: Instant) -> boo
                 live_open,
                 CANDLE_LIMIT as usize,
             );
+            if series.instrument.source == DataSource::Yahoo
+                && market::history::historical_prices_revised(&series.candles, &merged)
+            {
+                // A completed-price revision can invalidate older pages.
+                series.generation.fetch_add(1, Ordering::AcqRel);
+                series.older_inbox = None;
+                series.older = OlderHistory::default();
+            }
             let candles =
                 market::history::with_older(&series.candles, merged, series.older.keeps_older());
             series.set_candles(candles);

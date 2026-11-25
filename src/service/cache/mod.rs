@@ -11,6 +11,7 @@ pub mod disk;
 pub mod lookup;
 
 use crate::model::{DataSource, Kline, Timeframe};
+use crate::model::market::history::historical_prices_revised;
 use crate::service::ProviderError;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -130,24 +131,6 @@ fn patched(candles: &[Kline], tail: &[Kline]) -> Option<Vec<Kline>> {
         merged.push(candle.clone());
     }
     Some(merged)
-}
-
-/// A revised completed price can indicate a split or a vendor correction.
-fn historical_prices_revised(candles: &[Kline], tail: &[Kline]) -> bool {
-    let Some(last) = candles.last() else {
-        return false;
-    };
-    tail.iter().filter(|bar| bar.open_time < last.open_time).any(|bar| {
-        candles.binary_search_by_key(&bar.open_time, |held| held.open_time)
-            .ok()
-            .is_some_and(|index| {
-                let held = &candles[index];
-                [held.open, held.high, held.low, held.close]
-                    .into_iter()
-                    .zip([bar.open, bar.high, bar.low, bar.close])
-                    .any(|(old, new)| (old - new).abs() > old.abs().max(1.0) * 1e-6)
-            })
-    })
 }
 
 /// Candles for `source`/`symbol`/`timeframe` through `fetch`, which asks the provider for a `limit`.

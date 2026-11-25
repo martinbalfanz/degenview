@@ -612,6 +612,16 @@ impl Chart {
                     live_open,
                     CANDLE_LIMIT as usize,
                 );
+                // A completed OHLC correction may be a split. Never keep
+                // paged history on a potentially different adjustment scale.
+                if self.source == DataSource::Yahoo
+                    && market::history::historical_prices_revised(&self.candles, &fresh)
+                {
+                    self.reset_history();
+                    self.yahoo_preview.discard_samples(fetched.yahoo_request_started_ms);
+                    self.chart.set_yahoo_preview(None);
+                    self.chart.set_yahoo_quote(None);
+                }
                 self.candles =
                     market::history::with_older(&self.candles, fresh, self.older.keeps_older());
                 if let Some(started) = fetched.yahoo_request_started_ms
@@ -854,6 +864,29 @@ mod tests {
         chart.inbox = Some(receiver);
         chart.receive_fetch(Timeframe::HOUR_1);
         assert_eq!(open_times(&chart), vec![7, 8, 10, 11, 12, 13]);
+    }
+
+    #[test]
+    fn yahoo_completed_revision_abandons_older_pages_and_pending_answers() {
+        let mut chart = Chart::blank(1, "NVDA", DataSource::Yahoo);
+        chart.candles = vec![candle(7, 100.0), candle(8, 100.0), candle(10, 100.0), candle(11, 100.0)];
+        chart.older.arrived(2);
+        chart.older.started();
+        let (page_tx, page_rx) = mpsc::channel();
+        chart.older_inbox = Some(OlderRequest { receiver: page_rx, source: DataSource::Yahoo, symbol: "NVDA".into(), timeframe: Timeframe::HOUR_1 });
+        let (sender, receiver) = mpsc::channel();
+        sender.send(Ok(Fetched {
+            candles: vec![candle(10, 50.0), candle(11, 50.0), candle(12, 50.0)],
+            bars: Vec::new(),
+            series: Vec::new(),
+            yahoo_request_started_ms: Some(12),
+        })).unwrap();
+        chart.inbox = Some(receiver);
+        chart.receive_fetch(Timeframe::HOUR_1);
+        assert_eq!(open_times(&chart), vec![10, 11, 12]);
+        assert!(chart.older.untouched());
+        assert!(chart.older_inbox.is_none());
+        assert!(page_tx.send(Ok(vec![candle(6, 100.0)])).is_err());
     }
 
     #[test]
