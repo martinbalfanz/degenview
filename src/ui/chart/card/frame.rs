@@ -539,7 +539,7 @@ impl ChartCard {
             {
                 self.draw_yahoo_preview(&clipped, plot, scale, x_for(shown.len() - 1), slot_width, preview);
             }
-            self.draw_yahoo_quote(&clipped, plot, scale, price, candles.last(), style);
+            self.draw_yahoo_quote(&clipped, plot, scale, price, candles.last());
         }
         let main_tag_y = candles.last().map(|last| scale.y(last.close));
         self.paint_overlay_tags(

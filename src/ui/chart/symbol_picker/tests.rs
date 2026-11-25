@@ -478,7 +478,7 @@ fn a_missing_alpaca_key_is_a_card_with_a_settings_button_not_a_hint() {
         .picker
         .notice(&listing)
         .expect("stocks cannot be searched");
-    assert_eq!(notice.title, "Stocks need an Alpaca key");
+    assert_eq!(notice.title, "Alpaca needs an API key");
     assert!(notice.settings);
     // Another failure of the stock search has nothing to set up.
     let mut listing = rig.picker.listing(&ctx);
@@ -487,7 +487,7 @@ fn a_missing_alpaca_key_is_a_card_with_a_settings_button_not_a_hint() {
         ProviderError::from(http::Error::Network("timed out".to_owned())),
     )];
     let notice = rig.picker.notice(&listing).expect("a failure");
-    assert_eq!(notice.title, "Stocks could not be searched");
+    assert_eq!(notice.title, "Alpaca stocks could not be searched");
     assert!(!notice.settings);
     // Nothing to say while stocks are not in the scope.
     rig.picker.set_scope(Scope::Crypto);
@@ -1253,7 +1253,7 @@ fn a_venue_nothing_serves_is_named_and_the_symbol_searched_everywhere() {
     let shown = texts(&mut rig);
     assert!(
         shown.iter().any(|text| text
-            == "KUCOIN isn't supported. Searched: Binance, Coinbase, OKX, Kraken, Bybit, Gate.io, MEXC, DEXScreener, CoinGecko, Alpaca."),
+            == "KUCOIN isn't supported. Searched: Binance, Coinbase, OKX, Kraken, Bybit, Gate.io, MEXC, DEXScreener, CoinGecko, Alpaca, Yahoo Finance."),
         "{shown:?}"
     );
     assert!(
@@ -1270,7 +1270,7 @@ fn a_plain_miss_lists_the_venues_that_were_searched() {
     let shown = texts(&mut rig);
     assert!(
         shown.iter().any(|text| text
-            == "Nothing matches “zzz”. Searched: Binance, Coinbase, OKX, Kraken, Bybit, Gate.io, MEXC, DEXScreener, CoinGecko, Alpaca."),
+            == "Nothing matches “zzz”. Searched: Binance, Coinbase, OKX, Kraken, Bybit, Gate.io, MEXC, DEXScreener, CoinGecko, Alpaca, Yahoo Finance."),
         "{shown:?}"
     );
     rig.picker.set_venue(Some(DataSource::Coinbase));
@@ -1298,7 +1298,7 @@ fn a_venue_the_tab_does_not_list_says_so() {
     assert!(
         shown
             .iter()
-            .any(|text| text == "Binance has no markets under Stocks. Try another tab."),
+            .any(|text| text == "Binance has no markets under Traditional markets. Try another tab."),
         "{shown:?}"
     );
 }

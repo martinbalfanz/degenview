@@ -226,7 +226,7 @@ fn percent_uses_a_real_minus() {
 fn yahoo_preview_session_change_clears_history_and_changes_run_identity() {
     use crate::model::market::yahoo_session::PolicySnapshot;
     let mut preview = state();
-    preview.select_market(PreviewMarket { ticker: "STUDIOSESSION".into(), source: DataSource::Yahoo });
+    preview.select_market(PreviewMarket { ticker: "STUDIOSESS".into(), source: DataSource::Yahoo });
     preview.select_timeframe(Timeframe::HOUR_1);
     preview.set_candles_for_test(vec![Kline {
         open_time: 0, close_time: 3_599_999, open: 100.0, high: 101.0,
