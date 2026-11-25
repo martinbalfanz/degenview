@@ -596,7 +596,9 @@ impl DebugPanel {
         config.theme = Some(feed.theme);
         config.timeframe_seconds = feed.timeframe_seconds;
         config.libraries = libraries;
-        config.security_data = Some(Box::new(crate::host::pine::KlineSecurityDataProvider));
+        config.security_data = Some(Box::new(crate::host::pine::SessionSecurityDataProvider::new(
+            crate::model::market::yahoo_session::snapshot(),
+        )));
         config.breakpoints = self.state.specs();
         config.watches = self.state.watches.clone();
         config.stop_on_entry = mode == StartMode::Entry;

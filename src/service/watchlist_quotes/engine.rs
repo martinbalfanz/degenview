@@ -805,11 +805,12 @@ impl Engine {
 
     /// Publishes the latest tick of each product; the coordinator drains its channel on a
     /// short interval, so a busy feed becomes a few updates a second.
+    #[cfg(test)]
     pub fn receive_ticks(&mut self, ticks: Vec<StreamTick>, now: i64) {
         self.receive_ticks_with_policy(ticks, now, yahoo_session::snapshot());
     }
 
-    fn receive_ticks_with_policy(&mut self, ticks: Vec<StreamTick>, now: i64, policy: PolicySnapshot) {
+    pub(super) fn receive_ticks_with_policy(&mut self, ticks: Vec<StreamTick>, now: i64, policy: PolicySnapshot) {
         self.sync_yahoo_session(now, policy);
         let mut latest: HashMap<String, WatchlistQuote> = HashMap::new();
         let mut heard: HashSet<DataSource> = HashSet::new();

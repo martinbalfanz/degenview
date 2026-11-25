@@ -185,6 +185,15 @@ impl ChartRuns {
         self.runs.clear();
     }
 
+    /// Invalidate outputs before any reader sees them, even on a hidden or
+    /// temporarily empty chart.
+    pub(crate) fn sync_session(&mut self, policy: PolicySnapshot) {
+        if self.session_policy != Some(policy) {
+            self.stop_all();
+            self.session_policy = Some(policy);
+        }
+    }
+
     /// Stops every run and forgets every instance's logging choice (the chart's scripts were
     /// replaced).
     pub fn reset(&mut self) {
@@ -317,10 +326,7 @@ impl ChartRuns {
     ) -> Vec<(Arc<VisualOutput>, VisualOrder, u64)> {
         // Even a crypto script may request Yahoo data. Do not retain output
         // or controller state computed under another session policy.
-        if self.session_policy != Some(policy) {
-            self.stop_all();
-            self.session_policy = Some(policy);
-        }
+        self.sync_session(policy);
         if instances.iter().all(|instance| !instance.visible) {
             self.runs.clear();
             self.handed = None;

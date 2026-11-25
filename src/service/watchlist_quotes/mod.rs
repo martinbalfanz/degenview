@@ -167,7 +167,7 @@ fn run(
             ticks.extend(yahoo_ticks);
         }
         if !ticks.is_empty() {
-            lock(engine).receive_ticks(ticks, now);
+            lock(engine).receive_ticks_with_policy(ticks, now, policy);
         }
 
         if active && now - last_round >= interval {

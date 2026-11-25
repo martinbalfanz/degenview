@@ -35,10 +35,10 @@ use std::time::Duration;
 pub struct KlineSecurityDataProvider;
 
 /// One controller or historical run sees one immutable session policy.
-pub(super) struct SessionSecurityDataProvider(PolicySnapshot);
+pub(crate) struct SessionSecurityDataProvider(PolicySnapshot);
 
 impl SessionSecurityDataProvider {
-    pub(super) fn new(policy: PolicySnapshot) -> Self {
+    pub(crate) fn new(policy: PolicySnapshot) -> Self {
         Self(policy)
     }
 }

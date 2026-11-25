@@ -131,7 +131,9 @@ impl PineStudio {
         config.theme = Some(feed.theme);
         config.timeframe_seconds = feed.timeframe_seconds;
         config.libraries = Box::new(LibraryRegistry);
-        config.security_data = Some(Box::new(crate::host::pine::KlineSecurityDataProvider));
+        config.security_data = Some(Box::new(crate::host::pine::SessionSecurityDataProvider::new(
+            crate::model::market::yahoo_session::snapshot(),
+        )));
         let ctx = ctx.clone();
         let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || ctx.request_repaint());
         // A refusal to start is kept by the profiler and shown in its place.
