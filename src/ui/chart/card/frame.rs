@@ -418,6 +418,17 @@ impl ChartCard {
             .x;
         let ticks = chart::canvas::time_ticks(view.start, shown.len(), slot_width, label_width);
         let tick_xs: Vec<f32> = ticks.iter().map(|index| x_for(*index)).collect();
+        // Session tints sit beneath the grid, candles and script backgrounds.
+        // Do not shade constructed bars or regular-only UTC buckets.
+        if data.constructed.is_none()
+            && let Some(tf) = self.timeframe
+            && crate::model::market::yahoo_session::extended_candles(data.source, data.symbol, tf)
+        {
+            self.draw_yahoo_session_background(
+                &main_painter, plot, shown, slot_width, lead, tf,
+                preview.and_then(|(bar, index)| (index == shown.len()).then_some(bar)),
+            );
+        }
         self.draw_grid(&main_painter, plot, rect, scale, style, &tick_xs);
         canvas::paint_scale_lines(
             painter,

@@ -4,6 +4,69 @@
 use super::*;
 
 impl ChartCard {
+    /// Shade only the portions of visible actual bar slots that lie in the
+    /// extended session. A mixed hourly bar is split at 09:30 or 16:00 NY;
+    /// the compressed time axis does not acquire fictional overnight slots.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn draw_yahoo_session_background(
+        &self,
+        painter: &egui::Painter,
+        plot: Rect,
+        shown: &[Kline],
+        slot_width: f32,
+        lead: f32,
+        timeframe: Timeframe,
+        tail: Option<crate::model::market::yahoo_preview::Preview>,
+    ) {
+        use crate::model::market::yahoo_session::{Session, extended_spans};
+        if !slot_width.is_finite() || slot_width <= 0.0 || !lead.is_finite() {
+            return;
+        }
+        let pre = theme::pick(
+            Color32::from_rgba_unmultiplied(220, 115, 25, 22),
+            Color32::from_rgba_unmultiplied(220, 115, 25, 18),
+        );
+        let post = theme::pick(
+            Color32::from_rgba_unmultiplied(150, 75, 225, 28),
+            Color32::from_rgba_unmultiplied(150, 75, 225, 18),
+        );
+        let clipped = painter.with_clip_rect(plot);
+        let intervals = shown.iter().map(|bar| (bar.open_time, bar.close_time.saturating_add(1)))
+            .chain(tail.map(|bar| (bar.open_time, crate::model::market::bucket::next_bucket_start_ms(timeframe, bar.open_time))));
+        // Merge adjacent same-session spans to avoid seams and unnecessary shapes.
+        let mut pending: Option<(f32, f32, Color32)> = None;
+        let paint = |left, right, color| {
+            let rect = Rect::from_min_max(Pos2::new(left, plot.top()), Pos2::new(right, plot.bottom())).intersect(plot);
+            if rect.is_positive() {
+                clipped.rect_filled(rect, 0.0, color);
+            }
+        };
+        for (index, (start, end)) in intervals.enumerate() {
+            for (session, from, to) in extended_spans(start, end) {
+                let color = match session {
+                    Session::Pre => pre,
+                    Session::Post => post,
+                    Session::Regular => continue,
+                };
+                let left = plot.left() + slot_width * (index as f32 + lead + from);
+                let right = plot.left() + slot_width * (index as f32 + lead + to);
+                if let Some((_, previous_right, previous_color)) = pending.as_mut()
+                    && *previous_color == color && (left - *previous_right).abs() < 0.01
+                {
+                    *previous_right = right;
+                } else {
+                    if let Some((left, right, color)) = pending.take() {
+                        paint(left, right, color);
+                    }
+                    pending = Some((left, right, color));
+                }
+            }
+        }
+        if let Some((left, right, color)) = pending {
+            paint(left, right, color);
+        }
+    }
+
     /// The price labels and the grid lines behind the series. One tick list serves both, so a
     /// line is always on its label; the vertical lines stand on the time axis' own ticks. The
     /// grid is drawn from the scale and never feeds back into it.
