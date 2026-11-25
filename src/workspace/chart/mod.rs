@@ -349,6 +349,7 @@ impl Chart {
         let symbol = self.symbol.clone();
         let source = self.source;
         let choices = self.pm_series.clone();
+        let extended = market::yahoo_session::extended_candles(source, &symbol, timeframe);
         let repaint = ctx.clone();
 
         let generation = self.fetch_generation.fetch_add(1, Ordering::AcqRel) + 1;
@@ -361,12 +362,17 @@ impl Chart {
                 return;
             }
             let result = if choices.is_empty() {
-                service::fetch_klines_live(source, &symbol, timeframe, CANDLE_LIMIT).map(|live| {
-                    Fetched {
-                        candles: live.candles,
-                        bars: live.bars,
-                        series: Vec::new(),
-                    }
+                service::fetch_klines_live_with_session(
+                    source,
+                    &symbol,
+                    timeframe,
+                    CANDLE_LIMIT,
+                    extended,
+                )
+                .map(|live| Fetched {
+                    candles: live.candles,
+                    bars: live.bars,
+                    series: Vec::new(),
                 })
             } else {
                 Fetched::from_choices(service::fetch_choices(
@@ -457,14 +463,16 @@ impl Chart {
         let (source, symbol) = (self.source, self.symbol.clone());
         let repaint = ctx.clone();
         let asked = symbol.clone();
+        let extended = market::yahoo_session::extended_candles(source, &symbol, timeframe);
         service::work_queue::submit_for(source, move || {
-            let page = service::fetch_klines_range(
+            let page = service::fetch_klines_range_with_session(
                 source,
                 &asked,
                 timeframe,
                 0,
                 end,
                 market::history::PAGE,
+                extended,
             );
             let _ = sender.send(page);
             repaint.request_repaint();

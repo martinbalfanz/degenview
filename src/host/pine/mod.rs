@@ -39,25 +39,39 @@ const SECURITY_CACHE_TTL_MS: i64 = 30_000;
 /// provider, a dropped connection); the script waits for it, so the wait is short.
 const INTRABAR_RETRY_DELAYS: [Duration; 2] =
     [Duration::from_millis(500), Duration::from_millis(1_500)];
-type SecurityCache = HashMap<(SecurityKey, Option<ChartSpan>), (Vec<Kline>, i64)>;
+type SecurityCacheKey = (SecurityKey, Option<ChartSpan>, bool);
+type SecurityCache = HashMap<SecurityCacheKey, (Vec<Kline>, i64)>;
 static SECURITY_CACHE: LazyLock<Mutex<SecurityCache>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 impl KlineSecurityDataProvider {
-    fn cached(key: &(SecurityKey, Option<ChartSpan>)) -> Option<Vec<Kline>> {
+    fn extended(key: &SecurityKey) -> bool {
+        let (plain, _) = ticker::split(&key.symbol);
+        resolve_symbol(plain)
+            .zip(timeframe_of(key.interval))
+            .is_some_and(|((source, symbol), timeframe)| {
+                crate::model::market::yahoo_session::extended_candles(source, &symbol, timeframe)
+            })
+    }
+
+    fn cached(key: &SecurityCacheKey) -> Option<Vec<Kline>> {
         let cache = lock(&SECURITY_CACHE);
         let (candles, fetched_at) = cache.get(key)?;
         (now_ms() - fetched_at < SECURITY_CACHE_TTL_MS).then(|| candles.clone())
     }
 
-    fn remember(key: (SecurityKey, Option<ChartSpan>), candles: &[Kline]) {
+    fn remember(key: SecurityCacheKey, candles: &[Kline]) {
         lock(&SECURITY_CACHE).insert(key, (candles.to_vec(), now_ms()));
     }
 
     /// The series of finer bars over the chart's whole span (or its `calc_bars_count` newest bars).
     /// `Ok(None)` when there is nothing to build them from (the source has no candles that fold to
     /// the length, or none in the span); an error when the source has them and did not answer.
-    fn intrabars(key: &SecurityKey, chart: ChartSpan) -> Result<Option<Vec<Kline>>, ProviderError> {
+    fn intrabars(
+        key: &SecurityKey,
+        chart: ChartSpan,
+        extended: bool,
+    ) -> Result<Option<Vec<Kline>>, ProviderError> {
         let Some(target) = timeframe_of(key.interval) else {
             return Ok(None);
         };
@@ -79,13 +93,14 @@ impl KlineSecurityDataProvider {
         }
         let start = intrabar_start(target, start);
         let candles = while_transient(&INTRABAR_RETRY_DELAYS, || {
-            crate::service::fetch_klines_range(
+            crate::service::fetch_klines_range_with_session(
                 source,
                 &symbol,
                 plan.base(),
                 start,
                 chart.end_ms,
                 MAX_INTRABAR_CANDLES,
+                extended,
             )
         })?;
         if candles.is_empty() {
@@ -94,7 +109,7 @@ impl KlineSecurityDataProvider {
         Ok(Some(construct(modifier, fold_intrabars(plan, candles))))
     }
 
-    fn series(key: &SecurityKey, chart: Option<ChartSpan>) -> Option<Vec<Kline>> {
+    fn series(key: &SecurityKey, chart: Option<ChartSpan>, extended: bool) -> Option<Vec<Kline>> {
         // A `ticker.renko()` and its kin carry the construction with the symbol: the real candles
         // are fetched and the chart's own builders make the bars.
         let (plain, modifier) = ticker::split(&key.symbol);
@@ -106,34 +121,38 @@ impl KlineSecurityDataProvider {
             let covering = (chart.end_ms - chart.start_ms) / (key.interval as i64 * 1_000).max(1);
             (covering + 300).clamp(500, 1_000) as u32
         });
-        let candles = crate::service::fetch_klines(source, &symbol, timeframe, limit).ok()?;
+        let candles =
+            crate::service::fetch_klines_with_session(source, &symbol, timeframe, limit, extended)
+                .ok()?;
         Some(construct(modifier, candles))
     }
 }
 
 impl SecurityDataProvider for KlineSecurityDataProvider {
     fn candles(&self, key: &SecurityKey) -> Option<Vec<Kline>> {
-        let cache_key = (key.clone(), None);
+        let extended = Self::extended(key);
+        let cache_key = (key.clone(), None, extended);
         if let Some(candles) = Self::cached(&cache_key) {
             return Some(candles);
         }
-        let candles = Self::series(key, None)?;
+        let candles = Self::series(key, None, extended)?;
         Self::remember(cache_key, &candles);
         Some(candles)
     }
 
     fn candles_over(&self, key: &SecurityKey, chart: ChartSpan) -> Option<Vec<Kline>> {
-        let cache_key = (key.clone(), Some(chart));
+        let extended = Self::extended(key);
+        let cache_key = (key.clone(), Some(chart), extended);
         if let Some(candles) = Self::cached(&cache_key) {
             return Some(candles);
         }
         let finer = (key.interval * 1_000.0) < chart.spacing_ms as f64;
         let candles = if finer {
-            intrabars_or_series(Self::intrabars(key, chart), || {
-                Self::series(key, Some(chart))
+            intrabars_or_series(Self::intrabars(key, chart, extended), || {
+                Self::series(key, Some(chart), extended)
             })?
         } else {
-            Self::series(key, Some(chart))?
+            Self::series(key, Some(chart), extended)?
         };
         Self::remember(cache_key, &candles);
         Some(candles)
