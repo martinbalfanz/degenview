@@ -841,7 +841,7 @@ fn yahoo_reference(rest: &SourceQuote, tick: &mut SourceQuote) {
     let (Some(old), Some(ts)) = (rest.timestamp_ms, tick.timestamp_ms) else { return };
     // New York date, not UTC (after-hours crosses UTC midnight).
     let day = |ms: i64| {
-        let offset = crate::pine::time::zone_offset_secs("America/New_York", ms);
+        let offset = crate::pine::time::zone_offset_secs(Some("America/New_York"), ms);
         (ms + offset * 1000).div_euclid(86_400_000)
     };
     let same_day = day(old) == day(ts);
