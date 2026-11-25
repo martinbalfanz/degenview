@@ -411,6 +411,9 @@ impl ChartCard {
                 ),
                 None => data.source.display_name().to_owned(),
             };
+            if self.timeframe.is_some_and(|tf| crate::model::market::yahoo_session::extended_candles(data.source, data.symbol, tf)) {
+                subtitle.push_str(&format!(" · {}", tr!("Extended hours")));
+            }
             if let Some(market) = data.source.yahoo_market(data.symbol) {
                 subtitle.push_str(&format!(" · {} · {}", market.name(), market.currency()));
             } else if let Some(market) = data.source.yahoo_derivative(data.symbol) {

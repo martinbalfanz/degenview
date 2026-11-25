@@ -17,3 +17,5 @@ pub mod trend;
 pub mod venue;
 
 pub mod yahoo_preview;
+
+pub mod yahoo_session;

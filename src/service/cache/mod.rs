@@ -73,7 +73,8 @@ fn held() -> &'static Mutex<Held> {
 }
 
 fn key(source: DataSource, symbol: &str, timeframe: Timeframe) -> String {
-    format!("{source:?}:{}:{timeframe}", symbol.to_lowercase())
+    let mode = if crate::model::market::yahoo_session::extended_candles(source, symbol, timeframe) { ":extended" } else { "" };
+    format!("{source:?}:{}:{timeframe}{mode}", symbol.to_lowercase())
 }
 
 /// The newest `limit` candles of `candles`.

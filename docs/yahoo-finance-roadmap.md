@@ -34,8 +34,9 @@
 
 ## P2 — extended hours
 
-- [ ] Explicit opt-in regular vs extended session semantics in source configuration, cache keys, chart/picker, watchlist reference and Pine. Validate pre/post session flags, OHLCV, corporate actions, holidays/early closes; do not mix regular and extended history silently.
-- [ ] Stream session metadata and matching chart policy. Default regular session.
+- [x] Experimental startup opt-in for US stock/ETF intraday history, isolated cache and chart watermark; extended stream admission and explicit extended live test.
+- [ ] Replace startup flag with appropriate persisted per-chart or source setting; review quote reference and Pine/session stats. Validate pre/post session flags, OHLCV, corporate actions, holidays/early closes; do not mix regular and extended history silently.
+- [ ] Validate extended streaming live, regular/extended session boundaries, cache isolation, closing prints, quote reference and volume semantics. Default regular session. Run cargo test --lib live_yahoo_receives_extended_session_tick -- --ignored --nocapture in premarket/after-hours.
 
 ## P3 — deeper hourly history
 

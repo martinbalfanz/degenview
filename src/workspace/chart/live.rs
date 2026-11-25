@@ -16,13 +16,16 @@ pub(in crate::workspace) fn yahoo_chart_quote_owner(workspace_id: u64) -> u64 {
 pub(in crate::workspace) mod provisional;
 use provisional::Observation;
 
-fn indicative_yahoo_price(quote: &crate::model::watchlist::quote::WatchlistQuote, last: &Kline, now: i64) -> Option<f64> {
-    use crate::model::watchlist::quote::{Freshness, is_us_market_open};
+fn indicative_yahoo_price(quote: &crate::model::watchlist::quote::WatchlistQuote, last: &Kline, now: i64, extended: bool) -> Option<f64> {
+    use crate::model::watchlist::quote::Freshness;
+    use crate::model::market::yahoo_session::{Session, session_at};
     let timestamp = quote.timestamp_ms?;
     if quote.freshness != Freshness::Delayed || timestamp < last.open_time
         || timestamp > now.saturating_add(60_000)
         || now.saturating_sub(timestamp) > 30 * 60_000
-        || !is_us_market_open(timestamp) || !is_us_market_open(now)
+        || session_at(timestamp).is_none()
+        || session_at(timestamp) != session_at(now)
+        || (!extended && session_at(now) != Some(Session::Regular))
     {
         return None;
     }
@@ -52,7 +55,8 @@ impl ChartWorkspace {
                 chart.candles.last().and_then(|last| {
                     let instrument = InstrumentId::new(chart.source, &chart.symbol);
                     let quote = self.quote_book.get(&instrument)?;
-                    let price = indicative_yahoo_price(&quote, last, now)?;
+                    let extended = crate::model::market::yahoo_session::extended_candles(chart.source, &chart.symbol, self.timeframe);
+                    let price = indicative_yahoo_price(&quote, last, now, extended)?;
                     Some(Observation { price, timestamp_ms: quote.timestamp_ms? })
                 })
             } else {
@@ -495,11 +499,11 @@ mod yahoo_chart_tests {
             last: Some(101.0), timestamp_ms: Some(now - 1_000), freshness: Freshness::Delayed,
             ..WatchlistQuote::default()
         };
-        assert_eq!(indicative_yahoo_price(&quote, &bar, now), Some(101.0));
+        assert_eq!(indicative_yahoo_price(&quote, &bar, now, false), Some(101.0));
         assert_eq!(bar.close, 100.0);
-        assert!(indicative_yahoo_price(&quote.with_freshness(Freshness::Stale), &bar, now).is_none());
+        assert!(indicative_yahoo_price(&quote.with_freshness(Freshness::Stale), &bar, now, false).is_none());
         let old = WatchlistQuote { timestamp_ms: Some(now - 120_000), ..quote.clone() };
-        assert!(indicative_yahoo_price(&old, &bar, now).is_none());
-        assert!(indicative_yahoo_price(&quote, &bar, now + 31 * 60_000).is_none());
+        assert!(indicative_yahoo_price(&old, &bar, now, false).is_none());
+        assert!(indicative_yahoo_price(&quote, &bar, now + 31 * 60_000, false).is_none());
     }
 }

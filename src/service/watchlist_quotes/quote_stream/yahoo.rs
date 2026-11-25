@@ -101,6 +101,10 @@ fn decode(mut input: &[u8]) -> Option<Pricing<'_>> {
 }
 
 pub(super) fn parse_tick(text: &str) -> Option<StreamTick> {
+    parse_tick_with_session(text, crate::model::market::yahoo_session::extended_enabled())
+}
+
+fn parse_tick_with_session(text: &str, extended: bool) -> Option<StreamTick> {
     if text.len() > MAX_MESSAGE {
         return None;
     }
@@ -112,11 +116,14 @@ pub(super) fn parse_tick(text: &str) -> Option<StreamTick> {
     let price = pricing.price.filter(|price| price.is_finite() && *price > 0.0)?;
     let timestamp = pricing.timestamp.filter(|timestamp| *timestamp > 0)?;
     if !DataSource::Yahoo.yahoo_stream_symbol(symbol) || pricing.currency != Some("USD")
-        || pricing.session != Some(1)
+        || !crate::model::market::yahoo_session::admits_wire_session(pricing.session, timestamp, extended)
     {
         return None;
     }
-    let volume = pricing.volume.filter(|volume| *volume >= 0).map(|volume| volume as f64);
+    // Extended-session cumulative volume is not the regular session's share volume.
+    let volume = if pricing.session == Some(1) {
+        pricing.volume.filter(|volume| *volume >= 0).map(|volume| volume as f64)
+    } else { None };
     Some(StreamTick {
         source: DataSource::Yahoo,
         product_id: symbol.to_ascii_uppercase(),
@@ -134,22 +141,34 @@ pub(super) fn parse_tick(text: &str) -> Option<StreamTick> {
 mod tests {
     use super::*;
 
-    fn message(session: u8) -> String {
+    fn message(session: Option<u8>, timestamp: i64) -> String {
         let mut bytes = vec![10, 4, b'N', b'V', b'D', b'A', 21];
         bytes.extend_from_slice(&123.5f32.to_le_bytes());
-        bytes.extend_from_slice(&[24, 200, 1, 34, 3, b'U', b'S', b'D', 56, session, 72, 20]);
+        bytes.push(24);
+        let mut stamp = (timestamp as u64) << 1;
+        while stamp >= 128 { bytes.push((stamp as u8 & 0x7f) | 0x80); stamp >>= 7; }
+        bytes.push(stamp as u8);
+        bytes.extend_from_slice(&[34, 3, b'U', b'S', b'D']);
+        if let Some(session) = session { bytes.extend_from_slice(&[56, session]); }
+        bytes.extend_from_slice(&[72, 20]);
         json!({"message": encoding::base64_encode(&bytes)}).to_string()
     }
 
     #[test]
     fn pricing_data_requires_explicit_currency_session_and_vendor_timestamp() {
-        let tick = parse_tick(&message(1)).unwrap();
+        let timestamp = crate::pine::time::calendar::make(2026, 11, 25, 15, 0, 0, 0).unwrap();
+        let tick = parse_tick_with_session(&message(Some(1), timestamp), false).unwrap();
         assert_eq!(tick.product_id, "NVDA");
         assert_eq!(tick.quote.price, 123.5);
-        assert_eq!(tick.quote.timestamp_ms, Some(100));
+        assert_eq!(tick.quote.timestamp_ms, Some(timestamp));
         assert_eq!(tick.quote.volume_24h, Some(10.0));
-        assert!(parse_tick(&message(0)).is_none());
-        assert!(parse_tick(&message(2)).is_none());
+        assert!(parse_tick_with_session(&message(Some(0), timestamp), false).is_none());
+        assert!(parse_tick_with_session(&message(Some(2), timestamp), false).is_none());
+        let pre = timestamp - 3 * 3_600_000;
+        assert!(parse_tick_with_session(&message(None, pre), false).is_none());
+        let tick = parse_tick_with_session(&message(None, pre), true).unwrap();
+        assert_eq!(tick.quote.timestamp_ms, Some(pre));
+        assert_eq!(tick.quote.volume_24h, None);
         assert!(parse_tick(r#"{"message":"CgQ="}"#).is_none());
         assert!(parse_tick(r#"{"message":"/////w=="}"#).is_none());
         assert!(parse_tick("{}").is_none());
@@ -161,6 +180,29 @@ mod tests {
         let session = session(&["NVDA".into(), "SPY".into()]);
         assert_eq!(session.url, "wss://streamer.finance.yahoo.com/?version=2");
         assert_eq!(serde_json::from_str::<Value>(&session.subscribe[0]).unwrap(), json!({"subscribe":["NVDA","SPY"]}));
+    }
+
+    #[test]
+    #[ignore = "needs network and US premarket/after-hours activity"]
+    fn live_yahoo_receives_extended_session_tick() {
+        let session = session(&["NVDA".into(), "SPY".into(), "TSLA".into()]);
+        let shutdown = std::sync::atomic::AtomicBool::new(false);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(|| session.run(&shutdown, |text| {
+                if let Some(tick) = parse_tick_with_session(text, true)
+                    && tick.quote.timestamp_ms.is_some_and(|ts| matches!(crate::model::market::yahoo_session::session_at(ts), Some(crate::model::market::yahoo_session::Session::Pre | crate::model::market::yahoo_session::Session::Post)))
+                {
+                    let _ = sender.send(tick);
+                    return false;
+                }
+                true
+            }));
+            let result = receiver.recv_timeout(Duration::from_secs(90));
+            shutdown.store(true, std::sync::atomic::Ordering::Release);
+            let tick = result.expect("Yahoo extended-session tick within 90s");
+            println!("{}: {} at {:?}", tick.product_id, tick.quote.price, tick.quote.timestamp_ms);
+        });
     }
 
     #[test]

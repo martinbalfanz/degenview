@@ -820,7 +820,9 @@ fn yahoo_tick(previous: &WatchlistQuote, mut tick: SourceQuote, now: i64) -> Opt
         return None;
     }
     let same_day = old.div_euclid(86_400_000) == timestamp.div_euclid(86_400_000);
-    if same_day {
+    let regular = crate::model::market::yahoo_session::session_at(timestamp) == Some(crate::model::market::yahoo_session::Session::Regular);
+    let previous_regular = crate::model::market::yahoo_session::session_at(old) == Some(crate::model::market::yahoo_session::Session::Regular);
+    if same_day && regular && previous_regular {
         // Only the REST-confirmed reference, or the same reference carried
         // forward by preceding ticks. Never carry across the next UTC day.
         tick.previous_day_price = previous.change.map(|change| last - change)
@@ -838,7 +840,7 @@ mod yahoo_stream_tests {
     use super::*;
     #[test]
     fn stream_is_delayed_and_cannot_rewind_or_carry_yesterdays_reference() {
-        let day = 20_000 * 86_400_000;
+        let day = crate::pine::time::calendar::make(2026, 11, 25, 15, 0, 0, 0).unwrap();
         let rest = WatchlistQuote::from_source(DataSource::Yahoo, &SourceQuote {
             price: 100.0, previous_day_price: Some(90.0), timestamp_ms: Some(day + 1000),
             ..SourceQuote::default()
