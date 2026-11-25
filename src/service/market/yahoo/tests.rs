@@ -341,3 +341,38 @@ fn live_yahoo_native_hourly_shape_contract() {
     }
     assert!(failures.is_empty(), "native hourly contract failures: {failures:?}");
 }
+
+/// Exercise the public service route, rather than the raw diagnostic transport.
+#[test]
+#[ignore = "network; four production requests for native hourly history and paging"]
+fn live_yahoo_native_hourly_production_pages() {
+    use crate::model::Timeframe;
+    let source = DataSource::Yahoo;
+    let timeframe = Timeframe::HOUR_1;
+    let now = crate::clock::now_ms();
+    let day = DAY * 1000;
+    for extended in [false, true] {
+        let latest = crate::service::fetch_klines_with_session(source, "NVDA", timeframe, 1000, extended)
+            .expect("production hourly latest");
+        assert!(!latest.is_empty());
+        let oldest = latest.first().unwrap().open_time;
+        let page = crate::service::fetch_klines_range_with_session(source, "NVDA", timeframe, 0, oldest, 1000, extended)
+            .expect("production hourly older page");
+        assert!(!page.is_empty());
+        assert!(page.iter().all(|bar| bar.close_time < oldest));
+        assert!(page.first().unwrap().open_time < now - 60 * day);
+        assert!(page.first().unwrap().open_time >= now - 730 * day);
+        let mut merged = latest.clone();
+        let added = crate::model::market::history::prepend(&mut merged, page.clone());
+        assert_eq!(added, page.len());
+        assert!(merged.windows(2).all(|pair| pair[0].close_time < pair[1].open_time));
+        assert!(merged.iter().all(|bar| {
+            let length = bar.close_time + 1 - bar.open_time;
+            length > 0 && length <= 3_600_000
+                && matches!(bar.open_time.rem_euclid(3_600_000), 0 | 1_800_000)
+                && (extended || bar.open_time.rem_euclid(3_600_000) == 1_800_000)
+        }));
+        println!("production native hourly extended={extended} latest={} older={} oldest={} days ago={:.1}",
+            latest.len(), page.len(), merged[0].open_time, (now - merged[0].open_time) as f64 / day as f64);
+    }
+}

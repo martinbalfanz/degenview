@@ -374,3 +374,17 @@ fn yahoo_uses_regular_session_minute_bars_and_daily_calendar_folds() {
     assert_eq!(DataSource::Yahoo.plan(tf("1M")).unwrap().base(), Timeframe::DAY_1);
     assert!(!DataSource::Yahoo.serves(tf("30s")));
 }
+
+#[test]
+fn yahoo_instrument_plan_uses_native_hour_only_for_exact_us_hourly_series() {
+    let source = DataSource::Yahoo;
+    let hour = tf("1h");
+    assert!(source.plan_for("NVDA", hour).unwrap().is_native());
+    assert!(source.plan_for("SPY", hour).unwrap().is_native());
+    for symbol in ["SAP.DE", "^GSPC", "ES=F", "EURUSD=X"] {
+        assert_eq!(source.plan_for(symbol, hour).unwrap().base(), tf("15m"));
+    }
+    for timeframe in [tf("2h"), tf("4h"), tf("1D"), tf("1W")] {
+        assert_eq!(source.plan_for("NVDA", timeframe).unwrap().base(), source.plan(timeframe).unwrap().base());
+    }
+}

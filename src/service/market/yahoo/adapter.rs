@@ -166,10 +166,11 @@ fn fetch_range(
     now_ms: i64,
     extended: bool,
 ) -> Result<Vec<Kline>, ProviderError> {
-    if crate::model::market::yahoo_session::native_hourly(DataSource::Yahoo, symbol, timeframe) {
+    let plan = DataSource::Yahoo.plan_for(symbol, timeframe)
+        .ok_or_else(|| ProviderError::unsupported(DataSource::Yahoo, timeframe))?;
+    if plan.is_native() && timeframe == Timeframe::HOUR_1 {
         return fetch_native_hourly(symbol, start_ms, end_ms, max, now_ms, extended);
     }
-    let plan = crate::service::market::candles::plan(DataSource::Yahoo, timeframe)?;
     let interval = native(plan.base())?;
     if max == 0 || end_ms <= start_ms {
         return Ok(Vec::new());

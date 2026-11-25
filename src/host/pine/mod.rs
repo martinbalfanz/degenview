@@ -95,12 +95,7 @@ impl KlineSecurityDataProvider {
         // The candles the source itself has that `target` folds from, so a length it serves only
         // by folding (30 s on Gate.io, from its 10 s) is asked for in a length it can answer.
         let native_hourly = yahoo_session::native_hourly(source, &symbol, target);
-        let plan = if native_hourly {
-            FoldPlan::new(target, &[target])
-        } else {
-            source.plan(target)
-        };
-        let Some(plan) = plan else {
+        let Some(plan) = source.plan_for(&symbol, target) else {
             return Ok(None);
         };
         let base_ms = plan.base().nominal_ms();

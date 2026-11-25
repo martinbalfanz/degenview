@@ -170,7 +170,8 @@ const ALPACA: [Timeframe; 8] = [
     Timeframe::MONTH_1,
 ];
 
-/// Fold Yahoo's longer intervals from 15 minutes or daily bars on our UTC grid.
+/// UTC-grid Yahoo natives. Exact US hourly bars have a different grid and
+/// are selected by the instrument-aware plan, never as a fold base.
 const YAHOO: [Timeframe; 4] = [minutes(1), minutes(5), minutes(15), Timeframe::DAY_1];
 
 /// GeckoTerminal's OHLCV aggregates (it indexes DEXScreener's pools): minute 1, 5 and 15, hour 1,
@@ -213,6 +214,17 @@ impl DataSource {
     /// or whose candles no fold of reaches it.
     pub fn plan(self, timeframe: Timeframe) -> Option<FoldPlan> {
         FoldPlan::new(timeframe, self.natives())
+    }
+
+    /// The plan for a specific instrument. A native US Yahoo hour has
+    /// session-anchored boundaries and is available only as the exact target,
+    /// not as a base for other UTC-grid intraday lengths.
+    pub(crate) fn plan_for(self, symbol: &str, timeframe: Timeframe) -> Option<FoldPlan> {
+        if super::yahoo_session::native_hourly(self, symbol, timeframe) {
+            FoldPlan::new(timeframe, &[timeframe])
+        } else {
+            self.plan(timeframe)
+        }
     }
 
     /// Whether the source can chart `timeframe`: its candles fold to it, CoinGecko's price

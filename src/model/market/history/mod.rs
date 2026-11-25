@@ -123,7 +123,8 @@ pub fn prepend(held: &mut Vec<Kline>, mut page: Vec<Kline>) -> usize {
     added
 }
 
-/// A revised completed price can indicate a split or a vendor correction.
+/// A revised completed candle can indicate a split, vendor correction or
+/// a changed session boundary. Older pages may no longer share its contract.
 pub(crate) fn historical_prices_revised(candles: &[Kline], tail: &[Kline]) -> bool {
     let Some(last) = candles.last() else {
         return false;
@@ -133,7 +134,8 @@ pub(crate) fn historical_prices_revised(candles: &[Kline], tail: &[Kline]) -> bo
             .ok()
             .is_some_and(|index| {
                 let held = &candles[index];
-                [held.open, held.high, held.low, held.close]
+                held.close_time != bar.close_time
+                    || [held.open, held.high, held.low, held.close]
                     .into_iter()
                     .zip([bar.open, bar.high, bar.low, bar.close])
                     .any(|(old, new)| (old - new).abs() > old.abs().max(1.0) * 1e-6)

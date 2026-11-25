@@ -368,6 +368,25 @@ mod tests {
     }
 
     #[test]
+    fn yahoo_native_hourly_completed_boundary_revision_requires_whole_fetch() {
+        let asked = Mutex::new(Vec::new());
+        let provider = |limit: u32| {
+            asked.lock().unwrap().push(limit);
+            if limit == TAIL_LIMIT {
+                let mut tail = series(6..10);
+                tail[0].close_time -= 1;
+                Ok(tail)
+            } else {
+                Ok(series(0..10))
+            }
+        };
+        let source = DataSource::Yahoo;
+        fetch(source, "HOURBOUNDARY", Timeframe::HOUR_1, 10, STALE, false, provider).unwrap();
+        fetch(source, "HOURBOUNDARY", Timeframe::HOUR_1, 10, STALE, false, provider).unwrap();
+        assert_eq!(*asked.lock().unwrap(), [10, TAIL_LIMIT, 10]);
+    }
+
+    #[test]
     fn a_tail_that_leaves_a_gap_is_followed_by_a_whole_fetch() {
         let asked = Mutex::new(Vec::new());
         let provider = |limit: u32| {

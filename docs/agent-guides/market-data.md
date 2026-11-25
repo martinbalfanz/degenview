@@ -54,6 +54,7 @@ watchlists.
   seconds, minutes and hours restart at midnight (a `22m` day ends in a shorter bucket), days count from
   1970-01-01, weeks start on Monday, months count from 1970-01 (so `3M` is the calendar quarter,
   `12M` the year). A bucket closes 1 ms before the next opens.
+- Yahoo exact 1h for US equity/ETF instruments is an explicit exception to the UTC intraday grid: vendor trading periods define native opens and ends, including short final bars. Use `DataSource::plan_for(symbol, timeframe)` when requesting Yahoo or planning Pine security data; it selects native 1h only for the exact target and never uses those bars as a base for UTC folds. See [Yahoo provider notes](../yahoo-finance.md).
 - Missing interval: fold finer bars with `bucket::fold(candles, timeframe, truncated)`. Never
   substitute a nearby interval. `bucket::fold_base(target, natives)` is the coarsest native whose
   buckets nest exactly in the target's (an intraday base must divide the day, and the target when
