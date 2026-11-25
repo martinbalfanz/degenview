@@ -221,6 +221,10 @@ pub(super) fn detail_panel(
         && quote.is_some_and(|quote| quote.last.is_some())
     {
         last.push_str(&format!(" {}", market.currency()));
+    } else if let Some(market) = source.yahoo_derivative(&item.instrument.symbol)
+        && quote.is_some_and(|quote| quote.last.is_some())
+    {
+        last.push_str(&format!(" {}", market.currency()));
     }
     let percent = watchlist::quote::percent_text(quote, Some(source));
     let pill_text = if direction == Direction::Flat {

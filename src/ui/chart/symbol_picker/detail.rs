@@ -404,8 +404,11 @@ fn price_line(
         ui.painter().galley(at, galley, theme::text_secondary());
         return height.max(40.0);
     };
-    let mut price_text = amount(source, last);
+    let forex = source.yahoo_derivative(symbol).is_some_and(|market| !market.has_volume());
+    let mut price_text = if forex { format!("{last:.5}") } else { amount(source, last) };
     if let Some(market) = source.yahoo_market(symbol) {
+        price_text.push_str(&format!(" {}", market.currency()));
+    } else if let Some(market) = source.yahoo_derivative(symbol) {
         price_text.push_str(&format!(" {}", market.currency()));
     }
     let price = kit::digits(
@@ -424,7 +427,9 @@ fn price_line(
     {
         let color = change_color(percent);
         let room = (width - price_width - 12.0).max(40.0);
-        let moved = quote.change.map(|change| signed(change, last, source));
+        let moved = quote.change.map(|change| {
+            if forex { format!("{change:+.5}") } else { signed(change, last, source) }
+        });
         let text = change_text(moved, &signed_percent(percent), |text| {
             kit::digits(ui, text, 17.0, MEDIUM, color, f32::INFINITY)
                 .size()
@@ -477,7 +482,7 @@ fn status_line(ui: &Ui, at: Pos2, result: &SearchResult, quote: Option<&Watchlis
 
 /// The exchange the market is listed on, with its logo and what it trades there.
 fn venue_line(ui: &Ui, at: Pos2, result: &SearchResult) -> f32 {
-    let kind = if result.source.is_yahoo_index(&result.full_symbol) {
+    let kind = if result.source.is_yahoo_index(&result.full_symbol) || result.source.yahoo_derivative(&result.full_symbol).is_some() {
         super::search::result_kind(result)
     } else {
         match trading_kind(result.source) {

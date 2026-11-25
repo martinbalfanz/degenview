@@ -289,7 +289,10 @@ pub fn symbol_info(symbol_key: &str) -> SymbolInfo {
     let (source, ticker) = symbol_key.split_once(':').map_or((None, symbol_key), |(prefix, ticker)| {
         (crate::model::DataSource::from_watchlist_slug(prefix), ticker)
     });
-    let kind = if source.is_some_and(|source| source.is_yahoo_index(ticker)) {
+    let derivative = source.and_then(|source| source.yahoo_derivative(ticker));
+    let kind = if let Some(market) = derivative {
+        market.kind()
+    } else if source.is_some_and(|source| source.is_yahoo_index(ticker)) {
         "index"
     } else if source == Some(crate::model::DataSource::Yahoo) {
         "stock"
@@ -301,7 +304,7 @@ pub fn symbol_info(symbol_key: &str) -> SymbolInfo {
         ticker_id: symbol_key.to_owned(),
         currency: source.and_then(|source| source.equity_currency(ticker)).unwrap_or("USD").to_owned(),
         kind: kind.to_owned(),
-        base_currency: None,
+        base_currency: derivative.and_then(|market| market.base_currency()).map(str::to_owned),
         ..SymbolInfo::default()
     }
 }

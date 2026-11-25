@@ -140,3 +140,12 @@ fn london_spark_prices_and_previous_close_share_a_scale() {
     assert_eq!(quotes[0].regular_market_volume, Some(100.0));
     assert_eq!(quotes[1].equity_price_scale(), None);
 }
+
+#[test]
+fn derivative_metadata_rejects_wrong_type_currency_or_exchange() {
+    let body = r#"{"spark":{"result":[{"symbol":"EURUSD=X","response":[{"meta":{"regularMarketPrice":1.15,"currency":"USD","instrumentType":"CURRENCY","exchangeTimezoneName":"Europe/London","exchangeName":"CCY"}}]},{"symbol":"GC=F","response":[{"meta":{"regularMarketPrice":2500,"currency":"USD","instrumentType":"FUTURE","exchangeTimezoneName":"America/New_York","exchangeName":"CMX"}}]},{"symbol":"ES=F","response":[{"meta":{"regularMarketPrice":5000,"currency":"EUR","instrumentType":"FUTURE","exchangeTimezoneName":"America/Chicago","exchangeName":"CME"}}]}]}}"#;
+    let quotes = parse_quotes(body).unwrap();
+    assert!(!quotes[0].derivative().unwrap().has_volume());
+    assert!(quotes[1].derivative().unwrap().has_volume());
+    assert!(quotes[2].derivative().is_none());
+}

@@ -40,7 +40,9 @@ pub(super) fn symbol_info(symbol: &str, source: DataSource, chart_type: ChartTyp
         ticker: symbol.to_owned(),
         ticker_id: format!("{}:{}", source.watchlist_slug(), symbol),
         currency: source.equity_currency(symbol).unwrap_or("USD").to_owned(),
-        kind: if source.is_yahoo_index(symbol) {
+        kind: if let Some(market) = source.yahoo_derivative(symbol) {
+            market.kind()
+        } else if source.is_yahoo_index(symbol) {
             "index"
         } else if source.is_us_equity_source() {
             "stock"
@@ -48,7 +50,7 @@ pub(super) fn symbol_info(symbol: &str, source: DataSource, chart_type: ChartTyp
             "crypto"
         }
         .to_owned(),
-        base_currency: None,
+        base_currency: source.yahoo_derivative(symbol).and_then(|market| market.base_currency()).map(str::to_owned),
         chart: chart_type.kind(),
     }
 }

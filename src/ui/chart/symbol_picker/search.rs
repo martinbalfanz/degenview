@@ -71,7 +71,7 @@ impl Scope {
     pub fn title(self) -> &'static str {
         match self {
             Self::All => tr!("All"),
-            Self::Stocks => tr!("Stocks"),
+            Self::Stocks => tr!("Traditional markets"),
             Self::Crypto => tr!("Crypto"),
             Self::Predictions => tr!("Predictions"),
             Self::Dashboards => tr!("Dashboards"),
@@ -160,7 +160,12 @@ pub fn market_kind(source: DataSource) -> &'static str {
 
 /// Instrument-specific kind for search hits (Yahoo serves stocks and index levels).
 pub fn result_kind(result: &SearchResult) -> &'static str {
-    if result.source.is_yahoo_index(&result.full_symbol) {
+    if let Some(market) = result.source.yahoo_derivative(&result.full_symbol) {
+        match market {
+            crate::model::YahooDerivative::Forex { .. } => tr!("Forex"),
+            crate::model::YahooDerivative::Future { .. } => tr!("Futures"),
+        }
+    } else if result.source.is_yahoo_index(&result.full_symbol) {
         tr!("Index")
     } else {
         market_kind(result.source)

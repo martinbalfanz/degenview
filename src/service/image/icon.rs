@@ -222,6 +222,9 @@ fn resolve(source: DataSource, ticker: &str, base: &str) -> (Option<String>, boo
     if source.is_yahoo_index(ticker) {
         return (None, false);
     }
+    if source.yahoo_derivative(ticker).is_some() {
+        return (None, false);
+    }
     if source.is_us_equity_source() {
         return (stock_icon(ticker), false);
     }

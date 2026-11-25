@@ -79,6 +79,7 @@ impl Freshness {
 pub enum VolumeKind {
     QuoteCurrency,
     Shares,
+    Contracts,
     Base,
 }
 

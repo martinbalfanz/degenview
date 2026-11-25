@@ -239,8 +239,7 @@ impl AssetPickerState {
             let query = query.clone();
             work_queue::start_search(source, Some(ctx), move || {
                 let answer = search(source, &query).map(|mut hits| {
-                    hits.retain(|hit| !hit.source.is_yahoo_index(&hit.full_symbol)
-                        && hit.source.yahoo_market(&hit.full_symbol).is_none());
+                    hits.retain(|hit| !hit.source.yahoo_portfolio_excluded(&hit.full_symbol));
                     hits
                 });
                 (source, answer)

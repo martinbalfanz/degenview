@@ -361,15 +361,21 @@ fn yahoo(requests: &[QuoteRequest]) -> Result<HashMap<String, SourceQuote>, Quot
                 quote.symbol.eq_ignore_ascii_case(&request.symbol)
             })?;
             let equity_scale = quote.equity_price_scale();
-            let scale = equity_scale.or_else(|| quote.index_price_scale())?;
-            let volume = equity_scale.and(quote.regular_market_volume);
+            let derivative = quote.derivative();
+            let scale = equity_scale.or_else(|| quote.index_price_scale()).or_else(|| derivative.map(|_| 1.0))?;
+            let volume_kind = if equity_scale.is_some() {
+                Some(VolumeKind::Shares)
+            } else if derivative.is_some_and(|market| market.has_volume()) {
+                Some(VolumeKind::Contracts)
+            } else { None };
+            let volume = volume_kind.and(quote.regular_market_volume);
             Some((
                 request.symbol.clone(),
                 SourceQuote {
                     price: quote.price * scale,
                     previous_day_price: quote.previous_close.map(|price| price * scale),
                     volume_24h: volume,
-                    volume_kind: volume.map(|_| VolumeKind::Shares),
+                    volume_kind: volume.and(volume_kind),
                     timestamp_ms: quote.timestamp.and_then(|seconds| seconds.checked_mul(1_000)),
                 },
             ))

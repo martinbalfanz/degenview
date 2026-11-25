@@ -12,6 +12,14 @@ const DAY_MS: i64 = 86_400_000;
 const MAX_BARS: usize = 10_000;
 
 fn is_supported(hit: &Instrument) -> bool {
+    if let Some(market) = DataSource::Yahoo.yahoo_derivative(&hit.symbol) {
+        return match market {
+            crate::model::YahooDerivative::Forex { .. } => hit.quote_type == "CURRENCY"
+                && hit.exchange_code.as_deref() == Some("CCY"),
+            crate::model::YahooDerivative::Future { exchange, .. } => hit.quote_type == "FUTURE"
+                && hit.exchange_code.as_deref() == Some(exchange),
+        };
+    }
     if hit.quote_type == "INDEX" {
         return DataSource::Yahoo.is_yahoo_index(&hit.symbol);
     }
@@ -59,8 +67,9 @@ fn collect_sessions(value: &serde_json::Value, sessions: &mut Vec<(i64, i64)>) {
 fn native_bars(chart: Chart, timeframe: Timeframe) -> Result<Vec<Kline>, ProviderError> {
     let meta = chart.meta;
     let index_scale = meta.index_price_scale();
-    let index = index_scale.is_some();
-    let scale = index_scale.or_else(|| meta.equity_price_scale()).ok_or_else(|| {
+    let derivative = meta.derivative();
+    let no_volume = index_scale.is_some() || derivative.is_some_and(|market| !market.has_volume());
+    let scale = index_scale.or_else(|| meta.equity_price_scale()).or_else(|| derivative.map(|_| 1.0)).ok_or_else(|| {
         ProviderError::other("Yahoo returned an unsupported market or quote currency")
     })?;
     let mut sessions = Vec::new();
@@ -80,7 +89,7 @@ fn native_bars(chart: Chart, timeframe: Timeframe) -> Result<Vec<Kline>, Provide
         // Index levels are not traded shares. Kline currently has no
         // optional volume: use its zero placeholder only for indexes, and
         // hide volume for those symbols at presentation boundaries.
-        let volume = if index {
+        let volume = if no_volume {
             0.0
         } else if let Some(volume) = bar.volume {
             volume
@@ -90,11 +99,16 @@ fn native_bars(chart: Chart, timeframe: Timeframe) -> Result<Vec<Kline>, Provide
         let Some(timestamp) = bar.timestamp.checked_mul(1_000) else {
             continue;
         };
-        let open_time = bucket::bucket_start_ms(timeframe, timestamp);
+        let open_time = if !timeframe.is_intraday() && let Some(market) = derivative {
+            market.trading_day_ms(timestamp)
+        } else {
+            bucket::bucket_start_ms(timeframe, timestamp)
+        };
         // Wickline merges Yahoo's appended closing print. Do that only
         // when metadata confirms the exact close and the previous bar
         // belongs to that same regular session.
         if timeframe.is_intraday()
+            && !no_volume
             && bar.volume.is_none_or(|volume| volume == 0.0)
             && bar.open == bar.close
             && bar.high == bar.low
@@ -156,7 +170,11 @@ fn fetch_range(
         // The intraday horizon is relative to now, not the requested end.
         start = start.max(now_ms.saturating_sub(seconds * 1_000).saturating_add(1_000));
     }
-    let start_seconds = start.div_euclid(1_000);
+    // Overnight daily bars may be stamped on the preceding evening.
+    let vendor_start = if !plan.base().is_intraday() && DataSource::Yahoo.yahoo_derivative(symbol).is_some() {
+        start.saturating_sub(DAY_MS).max(0)
+    } else { start };
+    let start_seconds = vendor_start.div_euclid(1_000);
     let end_seconds = end.div_euclid(1_000);
     if end_seconds <= start_seconds {
         return Ok(Vec::new());
@@ -181,9 +199,11 @@ fn shape_range(
 ) -> Result<Vec<Kline>, ProviderError> {
     // Yahoo sometimes includes a forming/latest observation. A historical
     // range must never incorporate a trade from at or after its exclusive end.
+    let derivative = response.meta.derivative().filter(|_| !plan.base().is_intraday());
     response.bars.retain(|bar| {
         bar.timestamp.checked_mul(1_000).is_some_and(|ms| {
-            ms >= requested_start && ms < end
+            let date = derivative.map_or(ms, |market| market.trading_day_ms(ms));
+            date >= requested_start && date < end && ms < end
         })
     });
     let bars = native_bars(response, plan.base())?;
@@ -370,6 +390,32 @@ mod tests {
         assert_eq!(bars[0].volume, 500.0);
         chart.meta.currency = Some("USD".into());
         assert!(native_bars(chart, Timeframe::DAY_1).is_err());
+    }
+
+    #[test]
+    fn futures_daily_evening_timestamp_uses_next_trading_date() {
+        let open = crate::pine::time::calendar::make(2026, 1, 11, 23, 0, 0, 0).unwrap();
+        let date = crate::pine::time::calendar::make(2026, 1, 12, 0, 0, 0, 0).unwrap();
+        let mut chart = stock(vec![bar(open / 1_000, 5000.0, Some(10.0))]);
+        chart.meta.symbol = "ES=F".into();
+        chart.meta.instrument_type = Some("FUTURE".into());
+        chart.meta.exchange_timezone_name = Some("America/Chicago".into());
+        chart.meta.exchange_name = Some("CME".into());
+        let result = native_bars(chart, Timeframe::DAY_1).unwrap();
+        assert_eq!(result[0].open_time, date);
+        assert_eq!(result[0].volume, 10.0);
+    }
+
+    #[test]
+    fn forex_candles_do_not_require_vendor_volume() {
+        let mut chart = stock(vec![bar(86_400 + 8 * 3_600, 1.12345, None)]);
+        chart.meta.symbol = "EURUSD=X".into();
+        chart.meta.instrument_type = Some("CURRENCY".into());
+        chart.meta.exchange_timezone_name = Some("Europe/London".into());
+        chart.meta.exchange_name = Some("CCY".into());
+        let result = native_bars(chart, Timeframe::MINUTE_1).unwrap();
+        assert_eq!(result[0].close, 1.12345);
+        assert_eq!(result[0].volume, 0.0);
     }
 
     #[test]

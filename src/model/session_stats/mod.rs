@@ -363,6 +363,7 @@ pub enum MarketHours {
     UsStock,
     /// Exchange-local core session, without extended or special hours.
     International(crate::model::YahooMarket),
+    Derivative(crate::model::YahooDerivative),
 }
 
 impl MarketHours {
@@ -374,7 +375,9 @@ impl MarketHours {
     }
 
     pub fn for_market(source: super::DataSource, symbol: &str) -> Self {
-        if let Some(market) = source.yahoo_market(symbol) {
+        if let Some(market) = source.yahoo_derivative(symbol) {
+            Self::Derivative(market)
+        } else if let Some(market) = source.yahoo_market(symbol) {
             Self::International(market)
         } else {
             Self::for_source(source)
@@ -388,6 +391,8 @@ impl MarketHours {
             Self::Continuous => "UTC days",
             Self::UsStock => "US regular hours",
             Self::International(market) => market.name(),
+            Self::Derivative(crate::model::YahooDerivative::Forex { .. }) => "New York FX trading day",
+            Self::Derivative(crate::model::YahooDerivative::Future { .. }) => "CME Globex trading day",
         }
     }
 
@@ -397,6 +402,8 @@ impl MarketHours {
             Self::Continuous => tr!("UTC days"),
             Self::UsStock => tr!("US regular hours"),
             Self::International(market) => market.name(),
+            Self::Derivative(crate::model::YahooDerivative::Forex { .. }) => tr!("New York FX trading day"),
+            Self::Derivative(crate::model::YahooDerivative::Future { .. }) => tr!("CME Globex trading day"),
         }
     }
 }
@@ -594,6 +601,7 @@ fn usable(bar: &Kline) -> bool {
 fn sessions(bars: &[Kline], bar_ms: i64, hours: MarketHours, intraday: bool) -> Vec<Day> {
     let market = match hours {
         MarketHours::International(market) => MarketSessions::international(market),
+        MarketHours::Derivative(market) => MarketSessions::derivative(market),
         _ => MarketSessions::for_kind("stock"),
     };
     let mut days: Vec<Day> = Vec::new();
@@ -610,8 +618,14 @@ fn sessions(bars: &[Kline], bar_ms: i64, hours: MarketHours, intraday: bool) -> 
             if !(market.is_regular(bar.open_time) || market.is_regular(last)) {
                 continue;
             }
-            let offset = crate::pine::time::zone_offset_secs(Some(market.zone()), bar.open_time);
-            let c = calendar::components(bar.open_time + offset * 1_000);
+            let date_ms = if let MarketHours::Derivative(derivative) = hours {
+                let instant = if market.is_regular(bar.open_time) { bar.open_time } else { last };
+                derivative.trading_day_ms(instant)
+            } else {
+                let offset = crate::pine::time::zone_offset_secs(Some(market.zone()), bar.open_time);
+                bar.open_time + offset * 1_000
+            };
+            let c = calendar::components(date_ms);
             (c.year, c.month, c.day)
         } else {
             let c = calendar::components(bar.open_time);

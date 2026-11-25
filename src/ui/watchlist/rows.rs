@@ -313,6 +313,10 @@ pub fn instrument_row(ui: &mut egui::Ui, item: &WatchlistInstrument, row: &RowSt
                         && quote.is_some_and(|quote| quote.last.is_some())
                     {
                         price.push_str(&format!(" {}", market.currency()));
+                    } else if let Some(market) = item.instrument.source.yahoo_derivative(&item.instrument.symbol)
+                        && quote.is_some_and(|quote| quote.last.is_some())
+                    {
+                        price.push_str(&format!(" {}", market.currency()));
                     }
                     if change_under_price {
                         let price = kit::digits(

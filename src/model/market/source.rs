@@ -145,6 +145,85 @@ impl YahooMarket {
     }
 }
 
+/// A deliberately limited set of Yahoo currency pairs and rolling futures.
+/// These are charting instruments, not executable contracts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum YahooDerivative {
+    Forex { base: &'static str, quote: &'static str },
+    Future { root: &'static str, exchange: &'static str },
+}
+
+impl YahooDerivative {
+    pub fn for_symbol(symbol: &str) -> Option<Self> {
+        let upper = symbol.trim().to_ascii_uppercase();
+        let (base, quote) = match upper.as_str() {
+            "EURUSD=X" => ("EUR", "USD"),
+            "GBPUSD=X" => ("GBP", "USD"),
+            "USDJPY=X" | "JPY=X" => ("USD", "JPY"),
+            "USDCHF=X" | "CHF=X" => ("USD", "CHF"),
+            "USDCAD=X" | "CAD=X" => ("USD", "CAD"),
+            "AUDUSD=X" => ("AUD", "USD"),
+            "NZDUSD=X" => ("NZD", "USD"),
+            "EURGBP=X" => ("EUR", "GBP"),
+            "EURJPY=X" => ("EUR", "JPY"),
+            "ES=F" => return Some(Self::Future { root: "ES", exchange: "CME" }),
+            "NQ=F" => return Some(Self::Future { root: "NQ", exchange: "CME" }),
+            "GC=F" => return Some(Self::Future { root: "GC", exchange: "CMX" }),
+            "CL=F" => return Some(Self::Future { root: "CL", exchange: "NYM" }),
+            _ => return None,
+        };
+        Some(Self::Forex { base, quote })
+    }
+
+    pub const fn kind(self) -> &'static str {
+        match self {
+            Self::Forex { .. } => "forex",
+            Self::Future { .. } => "futures",
+        }
+    }
+
+    pub const fn currency(self) -> &'static str {
+        match self {
+            Self::Forex { quote, .. } => quote,
+            Self::Future { .. } => "USD",
+        }
+    }
+
+    pub const fn base_currency(self) -> Option<&'static str> {
+        match self {
+            Self::Forex { base, .. } => Some(base),
+            Self::Future { .. } => None,
+        }
+    }
+
+    pub const fn has_volume(self) -> bool {
+        matches!(self, Self::Future { .. })
+    }
+
+    /// Session conventions used for grouping bars (not a holiday calendar).
+    pub const fn timezone(self) -> &'static str {
+        match self {
+            Self::Forex { .. } => "America/New_York",
+            Self::Future { .. } => "America/Chicago",
+        }
+    }
+
+    pub const fn regular_session(self) -> &'static str {
+        match self {
+            Self::Forex { .. } => "1700-2400:12345,0000-1700:23456",
+            Self::Future { .. } => "1700-1600:12345",
+        }
+    }
+
+    /// Date of the trading session, with the evening assigned to the next day.
+    /// Return a UTC-midnight date label, not the actual session open instant.
+    pub fn trading_day_ms(self, timestamp_ms: i64) -> i64 {
+        let offset = crate::pine::time::zone_offset_secs(Some(self.timezone()), timestamp_ms);
+        let local = timestamp_ms + offset * 1_000;
+        (local + 7 * 3_600_000).div_euclid(86_400_000) * 86_400_000
+    }
+}
+
 impl DataSource {
     pub fn display_name(self) -> &'static str {
         match self {
@@ -260,9 +339,24 @@ impl DataSource {
         }
     }
 
+    pub fn yahoo_derivative(self, symbol: &str) -> Option<YahooDerivative> {
+        if self == Self::Yahoo {
+            YahooDerivative::for_symbol(symbol)
+        } else {
+            None
+        }
+    }
+
+    pub fn yahoo_portfolio_excluded(self, symbol: &str) -> bool {
+        self.is_yahoo_index(symbol) || self.yahoo_market(symbol).is_some()
+            || self.yahoo_derivative(symbol).is_some()
+    }
+
     /// Currency after normalizing the vendor's quote units.
     pub fn equity_currency(self, symbol: &str) -> Option<&'static str> {
-        if let Some(market) = self.yahoo_market(symbol) {
+        if let Some(derivative) = self.yahoo_derivative(symbol) {
+            Some(derivative.currency())
+        } else if let Some(market) = self.yahoo_market(symbol) {
             Some(market.currency())
         } else if self.is_us_equity_source() {
             Some("USD")
@@ -275,6 +369,7 @@ impl DataSource {
     /// (which may be absent or an aggregate) as ordinary share volume.
     pub fn provides_market_volume(self, symbol: &str) -> bool {
         self.provides_volume() && !self.is_yahoo_index(symbol)
+            && self.yahoo_derivative(symbol).is_none_or(|market| market.has_volume())
     }
 
     /// Whether this source reports per-candle turnover for the volume bars to draw. CoinGecko's
@@ -524,5 +619,22 @@ mod yahoo_market_tests {
         assert_eq!(YahooMarket::London.price_scale("GBX"), Some(0.01));
         assert_eq!(YahooMarket::London.price_scale("GBP"), Some(1.0));
         assert_eq!(YahooMarket::London.price_scale("USD"), None);
+    }
+}
+
+#[cfg(test)]
+mod yahoo_derivative_tests {
+    use super::*;
+
+    #[test]
+    fn fx_pairs_and_futures_have_distinct_currency_and_volume() {
+        let fx = DataSource::Yahoo.yahoo_derivative("EURJPY=X").unwrap();
+        assert_eq!(fx.base_currency(), Some("EUR"));
+        assert_eq!(fx.currency(), "JPY");
+        assert!(!fx.has_volume());
+        assert_eq!(DataSource::Yahoo.yahoo_derivative("JPY=X"), DataSource::Yahoo.yahoo_derivative("USDJPY=X"));
+        assert!(DataSource::Yahoo.yahoo_derivative("ES=F").unwrap().has_volume());
+        assert!(!DataSource::Yahoo.provides_market_volume("EURUSD=X"));
+        assert!(DataSource::Yahoo.provides_market_volume("GC=F"));
     }
 }

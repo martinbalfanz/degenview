@@ -202,6 +202,7 @@ fn volume_unit(kind: VolumeKind) -> &'static str {
     match kind {
         VolumeKind::QuoteCurrency => "quote_currency",
         VolumeKind::Shares => "shares",
+        VolumeKind::Contracts => "contracts",
         VolumeKind::Base => "base",
     }
 }
