@@ -73,14 +73,35 @@ impl Provisional {
         }
     }
 
-    pub(super) fn observe(&mut self, tf: Timeframe, last: &Kline, quote: Option<Observation>) -> Option<Preview> {
+    #[cfg(test)]
+    fn observe(&mut self, tf: Timeframe, last: &Kline, quote: Option<Observation>) -> Option<Preview> {
+        self.observe_with_grid(tf, last, quote, false, None)
+    }
+
+    pub(super) fn observe_with_grid(&mut self, tf: Timeframe, last: &Kline, quote: Option<Observation>, native_hourly: bool, native_bucket: Option<(i64, i64)>) -> Option<Preview> {
         self.sync_rest(tf, last);
         let Some(quote) = quote else {
             self.sampled = None;
             return None;
         };
-        let bucket = bucket_start_ms(tf, quote.timestamp_ms);
-        let next = next_bucket_start_ms(tf, last.open_time);
+        // A native future slot requires the provider's current period.
+        // The existing REST bar is already authoritative about its bounds.
+        let (bucket, end_time) = if native_hourly {
+            if (last.open_time..=last.close_time).contains(&quote.timestamp_ms) {
+                (last.open_time, last.close_time.saturating_add(1))
+            } else if let Some((start, end)) = native_bucket.filter(|(start, end)| *start <= quote.timestamp_ms && quote.timestamp_ms < *end) {
+                (start, end)
+            } else {
+                // A busy or expired schedule cache hides the preview, but
+                // does not erase a sample that may still be valid once the
+                // identical period is confirmed again.
+                return None;
+            }
+        } else {
+            let start = bucket_start_ms(tf, quote.timestamp_ms);
+            (start, next_bucket_start_ms(tf, start))
+        };
+        let next = if native_hourly { last.close_time.saturating_add(1) } else { next_bucket_start_ms(tf, last.open_time) };
         // The caller has already checked the quote's current trading session.
         // One observed newer bucket may follow a gap, but no intervening bars
         // are invented and a late observation cannot rewind the preview.
@@ -102,13 +123,13 @@ impl Provisional {
             }
         }
         let mut sampled = match self.sampled {
-            Some((old_tf, sample, ts)) if old_tf == tf && sample.open_time == bucket => {
+            Some((old_tf, sample, ts)) if old_tf == tf && sample.open_time == bucket && sample.end_time == end_time => {
                 if quote.timestamp_ms < ts {
                     return None;
                 }
                 sample
             }
-            _ => Preview { open_time: bucket, open: quote.price, high: quote.price, low: quote.price, close: quote.price },
+            _ => Preview { open_time: bucket, end_time, open: quote.price, high: quote.price, low: quote.price, close: quote.price },
         };
         sampled.high = sampled.high.max(quote.price);
         sampled.low = sampled.low.min(quote.price);
@@ -121,6 +142,7 @@ impl Provisional {
         }
         Some(Preview {
             open_time: last.open_time,
+            end_time: last.close_time.saturating_add(1),
             open: last.open,
             high: last.high.max(sampled.high),
             low: last.low.min(sampled.low),
@@ -174,6 +196,40 @@ mod tests {
         let gap = state.observe(tf, &bar(300_000), observe(200.0, 900_000)).unwrap();
         assert_eq!((gap.open_time, gap.open, gap.high, gap.low), (900_000, 200.0, 200.0, 200.0));
         assert!(state.observe(tf, &bar(300_000), observe(100.0, 600_000)).is_none());
+    }
+
+    #[test]
+    fn yahoo_native_hourly_future_preview_requires_metadata_and_yields_to_rest() {
+        let mut state = Provisional::default();
+        let mut rest = bar(1_800_000);
+        rest.close_time = 5_399_999;
+        let quote = |price, timestamp_ms| Some(Observation { price, timestamp_ms });
+        assert!(state.observe_with_grid(Timeframe::HOUR_1, &rest, quote(110.0, 5_400_001), true, None).is_none());
+        let bounds = Some((5_400_000, 7_200_000));
+        let first = state.observe_with_grid(Timeframe::HOUR_1, &rest, quote(110.0, 5_400_001), true, bounds).unwrap();
+        assert_eq!((first.open_time, first.end_time, first.open), (5_400_000, 7_200_000, 110.0));
+        assert!(state.observe_with_grid(Timeframe::HOUR_1, &rest, quote(110.0, 5_400_001), true, None).is_none());
+        let second = state.observe_with_grid(Timeframe::HOUR_1, &rest, quote(108.0, 5_400_002), true, bounds).unwrap();
+        assert_eq!((second.open, second.high, second.low, second.close), (110.0, 110.0, 108.0, 108.0));
+        let mut next = bar(5_400_000);
+        next.close_time = 7_199_999;
+        assert!(state.observe_with_grid(Timeframe::HOUR_1, &next, quote(108.0, 5_400_002), true, bounds).is_none());
+        assert!(state.observe_with_grid(Timeframe::HOUR_1, &next, quote(109.0, 5_400_003), true, bounds).is_some());
+    }
+
+    #[test]
+    fn yahoo_native_hourly_preview_uses_actual_rest_interval() {
+        let mut state = Provisional::default();
+        let mut rest = bar(1_800_000);
+        rest.close_time = 5_399_999;
+        let quote = |timestamp_ms| Some(Observation { price: 110.0, timestamp_ms });
+        let preview = state.observe_with_grid(Timeframe::HOUR_1, &rest, quote(4_000_000), true, None).unwrap();
+        assert_eq!(preview.open_time, 1_800_000);
+        assert!(state.observe_with_grid(Timeframe::HOUR_1, &rest, quote(5_400_000), true, None).is_none());
+        let mut rest = bar(5_400_000);
+        rest.close_time = 7_199_999;
+        assert!(state.observe_with_grid(Timeframe::HOUR_1, &rest, quote(6_000_000), true, None).is_some());
+        assert!(state.observe_with_grid(Timeframe::HOUR_1, &rest, quote(7_200_000), true, None).is_none());
     }
 
     #[test]

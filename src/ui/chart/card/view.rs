@@ -143,12 +143,11 @@ impl View {
 
     /// Live crosshair time mapping includes a visible provisional tail; other
     /// projections and navigation retain the authoritative series.
-    pub(super) fn hover_axis<'a>(&self, bars: &'a [Kline], plot: Rect, preview: Option<crate::model::market::yahoo_preview::Preview>, timeframe: Option<Timeframe>) -> crate::model::chart::sync::TimeAxis<'a> {
-        if let (Some(preview), Some(tf)) = (preview, timeframe)
+    pub(super) fn hover_axis<'a>(&self, bars: &'a [Kline], plot: Rect, preview: Option<crate::model::market::yahoo_preview::Preview>) -> crate::model::chart::sync::TimeAxis<'a> {
+        if let Some(preview) = preview
             && self.preview_index(bars, plot, preview) == Some(self.end - self.start)
         {
-            let end = crate::model::market::bucket::next_bucket_start_ms(tf, preview.open_time);
-            return crate::model::chart::sync::TimeAxis::with_preview_tail(bars, preview.open_time, end);
+            return crate::model::chart::sync::TimeAxis::with_preview_tail(bars, preview.open_time, preview.end_time);
         }
         crate::model::chart::sync::TimeAxis::new(bars)
     }
@@ -473,13 +472,13 @@ impl ChartCard {
 fn yahoo_preview_slot_requires_visible_space_but_allows_session_gaps() {
     use crate::model::market::yahoo_preview::Preview;
     let rest = Kline { open_time: 0, close_time: 299_999, open: 100.0, high: 102.0, low: 98.0, close: 101.0, volume: 100.0 };
-    let preview = Preview { open_time: 300_000, open: 105.0, high: 105.0, low: 105.0, close: 105.0 };
+    let preview = Preview { open_time: 300_000, end_time: 600_000, open: 105.0, high: 105.0, low: 105.0, close: 105.0 };
     let plot = Rect::from_min_size(Pos2::ZERO, Vec2::new(30.0, 100.0));
     let bars = [rest];
     assert_eq!(preview_index(&bars, true, plot, 10.0, 0.0, preview), Some(1));
     assert_eq!(preview_index(&bars, true, plot, 30.0, 0.0, preview), None);
     assert_eq!(preview_index(&bars, false, plot, 10.0, 0.0, preview), None);
-    assert_eq!(preview_index(&bars, true, plot, 10.0, 0.0, Preview { open_time: 900_000, ..preview }), Some(1));
+    assert_eq!(preview_index(&bars, true, plot, 10.0, 0.0, Preview { open_time: 900_000, end_time: 1_200_000, ..preview }), Some(1));
 }
 
 #[cfg(test)]
@@ -487,7 +486,7 @@ fn yahoo_preview_slot_requires_visible_space_but_allows_session_gaps() {
 fn yahoo_zero_margin_preview_reserves_one_slot_only_at_live_edge() {
     use crate::model::market::yahoo_preview::Preview;
     let bars: Vec<_> = (0..30).map(|i| Kline { open_time: i * 300_000, close_time: (i + 1) * 300_000 - 1, open: 100.0, high: 102.0, low: 98.0, close: 101.0, volume: 100.0 }).collect();
-    let preview = Preview { open_time: 30 * 300_000, open: 105.0, high: 105.0, low: 105.0, close: 105.0 };
+    let preview = Preview { open_time: 30 * 300_000, end_time: 31 * 300_000, open: 105.0, high: 105.0, low: 105.0, close: 105.0 };
     let live = HorizontalViewport { visible: 20, right_offset: 0.0 };
     let normal = preview_window(&bars, live, 0, None);
     let shifted = preview_window(&bars, live, 0, Some(preview));

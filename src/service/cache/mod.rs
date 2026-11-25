@@ -76,7 +76,8 @@ fn held() -> &'static Mutex<Held> {
 
 fn key(source: DataSource, symbol: &str, timeframe: Timeframe, extended: bool) -> String {
     let mode = if extended { ":extended" } else { "" };
-    format!("{source:?}:{}:{timeframe}{mode}", symbol.to_lowercase())
+    let grid = if crate::model::market::yahoo_session::native_hourly(source, symbol, timeframe) { ":native-hourly" } else { "" };
+    format!("{source:?}:{}:{timeframe}{grid}{mode}", symbol.to_lowercase())
 }
 
 /// Read already-fresh Yahoo intraday history without waiting for a provider or
@@ -367,6 +368,25 @@ mod tests {
     }
 
     #[test]
+    fn yahoo_native_hourly_completed_boundary_revision_requires_whole_fetch() {
+        let asked = Mutex::new(Vec::new());
+        let provider = |limit: u32| {
+            asked.lock().unwrap().push(limit);
+            if limit == TAIL_LIMIT {
+                let mut tail = series(6..10);
+                tail[0].close_time -= 1;
+                Ok(tail)
+            } else {
+                Ok(series(0..10))
+            }
+        };
+        let source = DataSource::Yahoo;
+        fetch(source, "HOURBOUNDARY", Timeframe::HOUR_1, 10, STALE, false, provider).unwrap();
+        fetch(source, "HOURBOUNDARY", Timeframe::HOUR_1, 10, STALE, false, provider).unwrap();
+        assert_eq!(*asked.lock().unwrap(), [10, TAIL_LIMIT, 10]);
+    }
+
+    #[test]
     fn a_tail_that_leaves_a_gap_is_followed_by_a_whole_fetch() {
         let asked = Mutex::new(Vec::new());
         let provider = |limit: u32| {
@@ -600,6 +620,16 @@ mod tests {
     }
 
     #[test]
+    fn yahoo_native_hourly_cache_identity_is_distinct() {
+        let regular = key(DataSource::Yahoo, "NVDA", Timeframe::HOUR_1, false);
+        let extended = key(DataSource::Yahoo, "NVDA", Timeframe::HOUR_1, true);
+        assert!(regular.ends_with(":native-hourly"));
+        assert!(extended.ends_with(":native-hourly:extended"));
+        assert_ne!(regular, extended);
+        assert!(!key(DataSource::Yahoo, "SAP.DE", Timeframe::HOUR_1, false).contains("native-hourly"));
+    }
+
+    #[test]
     fn yahoo_cached_series_keeps_original_request_timestamp() {
         let source = DataSource::Yahoo;
         let symbol = "WATERMARK";
@@ -611,7 +641,7 @@ mod tests {
         }).unwrap();
         assert_eq!(bars, series(0..2));
         assert_eq!(started, 12345);
-        forget_where(|candidate| candidate == &key);
+        forget_where(|candidate| candidate == key);
     }
 
     #[test]
@@ -651,10 +681,10 @@ mod tests {
         };
         assert_eq!(peek(false), Some(regular));
         assert_eq!(peek(true), Some(extended));
-        forget_where(|key| key == &extended_key);
+        forget_where(|key| key == extended_key);
         assert!(peek_yahoo_session(symbol, timeframe, 2, true).is_none());
         assert_eq!(peek(false), Some(series(1..3)));
-        forget_where(|key| key == &regular_key);
+        forget_where(|key| key == regular_key);
     }
 
     #[test]

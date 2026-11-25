@@ -79,8 +79,19 @@ impl ChartWorkspace {
                 None
             };
             // Preview only; never insert an observation into Chart::candles.
+            let native_hourly = crate::model::market::yahoo_session::native_hourly(chart.source, &chart.symbol, self.timeframe);
             let preview = chart.candles.last().and_then(|last| {
-                chart.yahoo_preview.observe(self.timeframe, last, observation)
+                let native_bucket = if native_hourly {
+                    observation.filter(|quote| quote.timestamp_ms > last.close_time).and_then(|quote| {
+                        crate::service::market::yahoo::current_hour_bucket(
+                            &chart.symbol, quote.timestamp_ms, now,
+                            crate::model::market::yahoo_session::extended_candles(chart.source, &chart.symbol, self.timeframe),
+                        )
+                    })
+                } else {
+                    None
+                };
+                chart.yahoo_preview.observe_with_grid(self.timeframe, last, observation, native_hourly, native_bucket)
             });
             if !active {
                 chart.yahoo_preview.clear();
@@ -90,7 +101,11 @@ impl ChartWorkspace {
             let marker = observation.filter(|quote| {
                 preview.is_some() || chart.candles.last().is_some_and(|last| {
                     !self.timeframe.is_intraday()
-                        || crate::model::market::bucket::bucket_start_ms(self.timeframe, quote.timestamp_ms) != last.open_time
+                        || if native_hourly {
+                            !(last.open_time..=last.close_time).contains(&quote.timestamp_ms)
+                        } else {
+                            crate::model::market::bucket::bucket_start_ms(self.timeframe, quote.timestamp_ms) != last.open_time
+                        }
                 })
             });
             chart.chart.set_yahoo_quote(marker.map(|quote| quote.price));

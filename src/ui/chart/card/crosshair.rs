@@ -205,9 +205,9 @@ impl ChartCard {
             let format = self.appearance.price_format();
             let values = [
                 (tr!("Provisional").to_owned(), format.format(preview.close)),
-                (tr_c!("readout label", "O").to_owned(), format.format(preview.open)),
-                (tr_c!("readout label", "H").to_owned(), format.format(preview.high)),
-                (tr_c!("readout label", "L").to_owned(), format.format(preview.low)),
+                (tr_c!("readout label: open", "O").to_owned(), format.format(preview.open)),
+                (tr_c!("readout label: high", "H").to_owned(), format.format(preview.high)),
+                (tr_c!("readout label: low", "L").to_owned(), format.format(preview.low)),
             ];
             let color = if preview.close >= preview.open { self.bullish_color() } else { self.bearish_color() };
             paint_ohlc_readout(painter, self.below_header(plot), &values, color);

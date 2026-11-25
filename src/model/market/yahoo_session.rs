@@ -95,6 +95,12 @@ pub fn extended_candles(source: DataSource, symbol: &str, timeframe: Timeframe) 
     snapshot().effective(source, symbol, timeframe).extended
 }
 
+/// Only the exact 1h US equity/ETF series uses native session-anchored bars.
+/// Longer intraday intervals still fold their original UTC-grid bases.
+pub(crate) fn native_hourly(source: DataSource, symbol: &str, timeframe: Timeframe) -> bool {
+    timeframe == Timeframe::HOUR_1 && source.yahoo_stream_symbol(symbol)
+}
+
 /// Standard weekday US equity hours in New York. Holiday/early-close
 /// calendars are not modeled: never infer that an exchange is actually open.
 pub fn session_at(timestamp_ms: i64) -> Option<Session> {
@@ -160,6 +166,17 @@ mod tests {
     fn at(hour: i64, minute: i64) -> i64 {
         crate::pine::time::calendar::make(2026, 11, 25, hour, minute, 0, 0).unwrap()
     }
+    #[test]
+    fn yahoo_native_hourly_scope_is_exact_and_source_qualified() {
+        assert!(native_hourly(DataSource::Yahoo, "NVDA", Timeframe::HOUR_1));
+        assert!(native_hourly(DataSource::Yahoo, "SPY", Timeframe::HOUR_1));
+        for symbol in ["SAP.DE", "^GSPC", "ES=F", "EURUSD=X"] {
+            assert!(!native_hourly(DataSource::Yahoo, symbol, Timeframe::HOUR_1));
+        }
+        assert!(!native_hourly(DataSource::Alpaca, "NVDA", Timeframe::HOUR_1));
+        assert!(!native_hourly(DataSource::Yahoo, "NVDA", Timeframe::parse("2h").unwrap()));
+    }
+
     #[test]
     fn yahoo_session_revision_detects_round_trips_and_ignores_noops() {
         let state = AtomicU64::new(0);

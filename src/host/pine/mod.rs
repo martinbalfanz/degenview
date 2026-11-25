@@ -94,7 +94,8 @@ impl KlineSecurityDataProvider {
         };
         // The candles the source itself has that `target` folds from, so a length it serves only
         // by folding (30 s on Gate.io, from its 10 s) is asked for in a length it can answer.
-        let Some(plan) = source.plan(target) else {
+        let native_hourly = yahoo_session::native_hourly(source, &symbol, target);
+        let Some(plan) = source.plan_for(&symbol, target) else {
             return Ok(None);
         };
         let base_ms = plan.base().nominal_ms();
@@ -104,7 +105,9 @@ impl KlineSecurityDataProvider {
         if key.recent_bars > 0 {
             start = start.max(chart.end_ms - chart.spacing_ms * key.recent_bars as i64);
         }
-        let start = intrabar_start(target, start);
+        // Native hourly starts are not on the UTC grid. The adapter pads the
+        // provider request and keeps only complete native bars in this span.
+        let start = if native_hourly { start } else { intrabar_start(target, start) };
         let candles = while_transient(&INTRABAR_RETRY_DELAYS, || {
             crate::service::fetch_klines_range_with_session(
                 source,
@@ -119,7 +122,8 @@ impl KlineSecurityDataProvider {
         if candles.is_empty() {
             return Ok(None);
         }
-        Ok(Some(construct(modifier, fold_intrabars(plan, candles))))
+        let candles = if native_hourly { candles } else { fold_intrabars(plan, candles) };
+        Ok(Some(construct(modifier, candles)))
     }
 
     fn series(key: &SecurityKey, chart: Option<ChartSpan>, extended: bool) -> Option<Vec<Kline>> {

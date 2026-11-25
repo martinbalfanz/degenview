@@ -8,7 +8,9 @@ use crate::model::{DataSource, YahooDerivative};
 use crate::service::{ProviderError, net::http};
 
 mod adapter;
+mod hourly;
 pub use adapter::YAHOO;
+pub(crate) use hourly::current_hour_bucket;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -31,6 +33,7 @@ pub enum Interval {
     Minute,
     FiveMinutes,
     FifteenMinutes,
+    Hour,
     Day,
 }
 
@@ -40,6 +43,7 @@ impl Interval {
             Self::Minute => "1m",
             Self::FiveMinutes => "5m",
             Self::FifteenMinutes => "15m",
+            Self::Hour => "60m",
             Self::Day => "1d",
         }
     }
@@ -48,6 +52,7 @@ impl Interval {
         match self {
             Self::Minute => Some(7 * DAY),
             Self::FiveMinutes | Self::FifteenMinutes => Some(60 * DAY),
+            Self::Hour => Some(730 * DAY),
             Self::Day => None,
         }
     }
