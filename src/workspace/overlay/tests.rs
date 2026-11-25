@@ -12,6 +12,7 @@ struct Fake {
     jobs: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
     calls: Mutex<Vec<String>>,
     sessions: Mutex<Vec<bool>>,
+    cached: Mutex<HashMap<bool, Vec<Kline>>>,
     answers: Mutex<HashMap<String, Result<Vec<Kline>, ProviderError>>>,
     pages: Mutex<HashMap<String, Vec<Kline>>>,
 }
@@ -43,6 +44,18 @@ impl Fake {
 impl OverlayBackend for Fake {
     fn submit(&self, _: DataSource, job: Box<dyn FnOnce() + Send>) {
         self.jobs.lock().unwrap().push(job);
+    }
+
+    fn cached_session(
+        &self,
+        instrument: &InstrumentId,
+        _: Timeframe,
+        extended: bool,
+    ) -> Option<Vec<Kline>> {
+        if instrument.source != DataSource::Yahoo {
+            return None;
+        }
+        self.cached.lock().unwrap().get(&extended).cloned()
     }
 
     fn klines(
@@ -685,4 +698,36 @@ fn yahoo_overlay_session_change_discards_old_answers_and_queued_jobs() {
     hub.poll_with_session(Timeframe::HOUR_1, &ctx, now, true);
     assert_eq!(*fake.sessions.lock().unwrap(), [false, false, false, true]);
     assert_eq!(hub.feed(&yahoo).unwrap().status, OverlayStatus::Ready);
+}
+
+#[test]
+fn yahoo_overlay_restores_warm_mode_before_queued_refresh() {
+    let (mut hub, fake) = hub();
+    let now = Instant::now();
+    let ctx = egui::Context::default();
+    let yahoo = InstrumentId::new(DataSource::Yahoo, "NVDA");
+    let mut list = OverlayList::new();
+    list.add(&market("BTCUSDT"), yahoo.clone(), None);
+    hub.sync_chart(1, &list, Some(10 * HOUR));
+    hub.poll_with_session(Timeframe::HOUR_1, &ctx, now, false);
+    fake.run_jobs();
+    hub.poll_with_session(Timeframe::HOUR_1, &ctx, now, false);
+    let regular = vec![candle(10 * HOUR, 1.0)];
+    let extended = vec![candle(9 * HOUR, 3.0), candle(10 * HOUR, 4.0)];
+    fake.cached.lock().unwrap().insert(false, regular.clone());
+    fake.cached.lock().unwrap().insert(true, extended.clone());
+
+    hub.poll_with_session(Timeframe::HOUR_1, &ctx, now, true);
+    let feed = hub.feed(&yahoo).unwrap();
+    assert_eq!(*feed.candles, extended);
+    assert_eq!(feed.status, OverlayStatus::Ready);
+    assert_eq!(fake.pending(), 1);
+
+    hub.poll_with_session(Timeframe::HOUR_1, &ctx, now, false);
+    let feed = hub.feed(&yahoo).unwrap();
+    assert_eq!(*feed.candles, regular);
+    assert_eq!(feed.status, OverlayStatus::Ready);
+    // Only the newest request survives the switch back.
+    fake.run_jobs();
+    assert_eq!(*fake.sessions.lock().unwrap(), [false, false]);
 }

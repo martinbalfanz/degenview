@@ -77,6 +77,30 @@ fn key(source: DataSource, symbol: &str, timeframe: Timeframe, extended: bool) -
     format!("{source:?}:{}:{timeframe}{mode}", symbol.to_lowercase())
 }
 
+/// Read already-fresh Yahoo intraday history without waiting for a provider or
+/// a cache lock. A missing, stale or undersized series follows the normal worker
+/// path; in particular, never serve the other session as a fallback.
+pub(crate) fn peek_yahoo_session(
+    symbol: &str,
+    timeframe: Timeframe,
+    limit: u32,
+    extended: bool,
+) -> Option<Vec<Kline>> {
+    let source = DataSource::Yahoo;
+    if !source.yahoo_stream_symbol(symbol) || !timeframe.is_intraday() {
+        return None;
+    }
+    let fresh = policy(source, timeframe)?.fresh;
+    let held = held().try_lock().ok()?;
+    let entry = held.entries.get(&key(source, symbol, timeframe, extended))?;
+    fresh_entry(entry, limit, fresh)
+}
+
+fn fresh_entry(entry: &Entry, limit: u32, fresh: Duration) -> Option<Vec<Kline>> {
+    (entry.requested >= limit && entry.fetched.elapsed() < fresh && !entry.candles.is_empty())
+        .then(|| newest(&entry.candles, limit))
+}
+
 /// The newest `limit` candles of `candles`.
 fn newest(candles: &[Kline], limit: u32) -> Vec<Kline> {
     let start = candles.len().saturating_sub(limit as usize);
@@ -571,6 +595,48 @@ mod tests {
         })
         .unwrap();
         assert_eq!(regular, cached);
+    }
+
+    #[test]
+    fn yahoo_warm_session_cache_requires_fresh_and_sufficient_history() {
+        let entry = Entry {
+            fetched: Instant::now(),
+            requested: 10,
+            candles: series(0..10),
+        };
+        assert_eq!(fresh_entry(&entry, 2, LONG).unwrap(), series(8..10));
+        assert!(fresh_entry(&entry, 11, LONG).is_none());
+        assert!(fresh_entry(&entry, 2, Duration::ZERO).is_none());
+    }
+
+    #[test]
+    fn yahoo_warm_session_cache_never_falls_back_to_other_mode() {
+        let source = DataSource::Yahoo;
+        let symbol = "WARMSESSION";
+        let timeframe = Timeframe::HOUR_1;
+        // Hold the table for setup, then use the same nonblocking path as a UI frame.
+        let regular = series(1..3);
+        let extended = series(3..5);
+        let regular_key = key(source, symbol, timeframe, false);
+        let extended_key = key(source, symbol, timeframe, true);
+        store(&regular_key, 2, regular.clone(), 2);
+        store(&extended_key, 2, extended.clone(), 2);
+        // Another test may briefly hold the global table; retry only in the test.
+        let peek = |mode| {
+            (0..1000).find_map(|_| {
+                let result = peek_yahoo_session(symbol, timeframe, 2, mode);
+                if result.is_none() {
+                    std::thread::yield_now();
+                }
+                result
+            })
+        };
+        assert_eq!(peek(false), Some(regular));
+        assert_eq!(peek(true), Some(extended));
+        forget_where(|key| key == &extended_key);
+        assert!(peek_yahoo_session(symbol, timeframe, 2, true).is_none());
+        assert_eq!(peek(false), Some(series(1..3)));
+        forget_where(|key| key == &regular_key);
     }
 
     #[test]

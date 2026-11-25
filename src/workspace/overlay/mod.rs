@@ -49,6 +49,16 @@ const SLOW_RETRY_AFTER: Duration = Duration::from_secs(45);
 pub(super) trait OverlayBackend: Send + Sync + 'static {
     /// Runs `job` off the UI thread, on `source`'s lane of the work queue.
     fn submit(&self, source: DataSource, job: Box<dyn FnOnce() + Send>);
+    /// Optional nonblocking read of a fresh, session-specific history.
+    fn cached_session(
+        &self,
+        _instrument: &InstrumentId,
+        _timeframe: Timeframe,
+        _extended: bool,
+    ) -> Option<Vec<Kline>> {
+        None
+    }
+
     /// The newest candles, with the base candles of the newest one's bucket when a live feed
     /// folds them.
     fn klines(
@@ -75,6 +85,23 @@ struct ServiceBackend;
 impl OverlayBackend for ServiceBackend {
     fn submit(&self, source: DataSource, job: Box<dyn FnOnce() + Send>) {
         service::work_queue::submit_for(source, job);
+    }
+
+    fn cached_session(
+        &self,
+        instrument: &InstrumentId,
+        timeframe: Timeframe,
+        extended: bool,
+    ) -> Option<Vec<Kline>> {
+        if instrument.source != DataSource::Yahoo {
+            return None;
+        }
+        service::cache::peek_yahoo_session(
+            &instrument.symbol,
+            timeframe,
+            CANDLE_LIMIT,
+            extended,
+        )
     }
 
     fn klines(
@@ -400,6 +427,16 @@ impl OverlayHub {
             if series.extended != mode {
                 series.reset();
                 series.extended = mode;
+                if series.shown()
+                    && let Some(candles) = self.backend.cached_session(
+                        &series.instrument,
+                        timeframe,
+                        mode,
+                    )
+                {
+                    series.set_candles(candles);
+                    series.status = OverlayStatus::Ready;
+                }
                 changed = true;
             }
             changed |= receive_fetch(series, timeframe, now);
@@ -452,7 +489,7 @@ impl OverlayHub {
                 2 | 0 => request_newest(series, &backend, timeframe, ctx, now),
                 _ => request_older(series, &backend, timeframe, ctx),
             }
-            if class == 0 {
+            if class == 0 && series.status != OverlayStatus::Ready {
                 series.status = OverlayStatus::Loading;
             }
             free -= 1;

@@ -382,6 +382,7 @@ impl Chart {
             return;
         }
         self.prepare_yahoo_session(timeframe, extended);
+        self.restore_yahoo_session_cache(timeframe);
         let (sender, receiver) = mpsc::channel();
         let symbol = self.symbol.clone();
         let source = self.source;
@@ -426,6 +427,23 @@ impl Chart {
         self.inbox = Some(receiver);
         self.loading = true;
         self.last_fetch = Instant::now();
+    }
+
+    /// Populate the switched chart immediately when its own session has a fresh
+    /// cache entry. The regular worker still confirms the data; do not stamp
+    /// a new paper quote time merely because a cached series was displayed.
+    fn restore_yahoo_session_cache(&mut self, timeframe: Timeframe) {
+        if self.candles.is_empty()
+            && self.source == DataSource::Yahoo
+            && let Some(candles) = service::cache::peek_yahoo_session(
+                &self.symbol,
+                timeframe,
+                CANDLE_LIMIT,
+                self.yahoo_extended,
+            )
+        {
+            self.candles = candles;
+        }
     }
 
     /// How long after a fetch began the next one is due.
@@ -626,6 +644,44 @@ mod tests {
             timeframe: Timeframe::HOUR_1,
         });
         chart
+    }
+
+    #[test]
+    fn yahoo_chart_restores_only_the_selected_warm_session() {
+        let symbol = "WARMCHART";
+        let timeframe = Timeframe::HOUR_1;
+        let policy = service::cache::policy(DataSource::Yahoo, timeframe).unwrap();
+        let regular = vec![candle(10, 1.0)];
+        let extended = vec![candle(20, 2.0)];
+        for (mode, candles) in [(false, &regular), (true, &extended)] {
+            service::cache::fetch(
+                DataSource::Yahoo,
+                symbol,
+                timeframe,
+                CANDLE_LIMIT,
+                policy,
+                mode,
+                |_| Ok(candles.clone()),
+            )
+            .unwrap();
+        }
+
+        let mut chart = Chart::blank(1, symbol, DataSource::Yahoo);
+        for (mode, expected) in [(true, &extended), (false, &regular)] {
+            assert!(chart.prepare_yahoo_session(timeframe, mode));
+            // The production read never waits for the lock. Allow contention
+            // from the other cache tests without doing any provider work.
+            for _ in 0..1000 {
+                chart.restore_yahoo_session_cache(timeframe);
+                if !chart.candles.is_empty() {
+                    break;
+                }
+                std::thread::yield_now();
+            }
+            assert_eq!(&chart.candles, expected);
+            assert!(chart.last_data_ms.is_none());
+            assert!(chart.inbox.is_none());
+        }
     }
 
     #[test]
