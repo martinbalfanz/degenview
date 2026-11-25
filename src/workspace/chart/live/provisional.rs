@@ -17,6 +17,8 @@ pub(in crate::workspace) struct Provisional {
     sampled: Option<(Timeframe, Preview, i64)>,
     rest: Option<(Timeframe, Kline)>,
     observed_through: Option<i64>,
+    /// Conservative same-bucket cutoff, not a vendor trade watermark.
+    rest_floor: Option<(i64, i64)>,
 }
 
 impl Provisional {
@@ -24,9 +26,10 @@ impl Provisional {
         self.sampled = None;
         self.rest = None;
         self.observed_through = None;
+        self.rest_floor = None;
     }
 
-    pub(super) fn observe(&mut self, tf: Timeframe, last: &Kline, quote: Option<Observation>) -> Option<Preview> {
+    fn sync_rest(&mut self, tf: Timeframe, last: &Kline) -> bool {
         // The provider has no true trade watermark. A changed REST bar is an
         // authoritative correction, so discard old sampled extrema and do not
         // reapply the last seen quote. Unchanged cached bars are not corrections.
@@ -42,7 +45,26 @@ impl Provisional {
                 self.clear();
             }
             self.rest = Some((tf, last.clone()));
+            self.rest_floor = None;
+            return true;
         }
+        false
+    }
+
+    /// A changed authoritative candle suppresses observations at or before
+    /// the originating request start, including delayed packets not seen yet.
+    /// Do not advance on an unchanged response, even if it was re-fetched.
+    pub(in crate::workspace) fn reconcile_rest(&mut self, tf: Timeframe, last: &Kline, request_started_ms: i64) {
+        if self.sync_rest(tf, last) || self.rest_floor.is_none() {
+            self.rest_floor = Some((last.open_time, request_started_ms));
+            if self.sampled.is_some_and(|(_, sample, ts)| sample.open_time == last.open_time && ts <= request_started_ms) {
+                self.sampled = None;
+            }
+        }
+    }
+
+    pub(super) fn observe(&mut self, tf: Timeframe, last: &Kline, quote: Option<Observation>) -> Option<Preview> {
+        self.sync_rest(tf, last);
         let Some(quote) = quote else {
             self.sampled = None;
             return None;
@@ -58,6 +80,9 @@ impl Provisional {
             || (bucket != last.open_time && !contiguous)
         {
             self.sampled = None;
+            return None;
+        }
+        if self.rest_floor.is_some_and(|(open, cutoff)| bucket == open && quote.timestamp_ms <= cutoff) {
             return None;
         }
         if self.observed_through.is_some_and(|ts| quote.timestamp_ms <= ts) {
@@ -100,6 +125,26 @@ mod tests {
     use super::*;
     fn bar(start: i64) -> Kline {
         Kline { open_time: start, close_time: start + 299_999, open: 100.0, high: 102.0, low: 98.0, close: 101.0, volume: 1234.0 }
+    }
+
+    #[test]
+    fn yahoo_rest_request_floor_rejects_unseen_delayed_ticks_without_advancing_on_cache_hits() {
+        let mut state = Provisional::default();
+        let tf = Timeframe::parse("5m").unwrap();
+        let mut rest = bar(0);
+        let observe = |price, timestamp_ms| Some(Observation { price, timestamp_ms });
+        state.reconcile_rest(tf, &rest, 1000);
+        assert!(state.observe(tf, &rest, observe(200.0, 900)).is_none());
+        assert!(state.observe(tf, &rest, observe(103.0, 1100)).is_some());
+        state.reconcile_rest(tf, &rest, 2000);
+        assert!(state.observe(tf, &rest, observe(104.0, 1200)).is_some());
+        rest.close = 100.0;
+        state.reconcile_rest(tf, &rest, 3000);
+        assert!(state.observe(tf, &rest, observe(300.0, 2900)).is_none());
+        assert_eq!(state.observe(tf, &rest, observe(101.0, 3100)).unwrap().high, 102.0);
+        // A preceding candle's floor never blocks the independent next bucket.
+        state.reconcile_rest(tf, &rest, 301_000);
+        assert_eq!(state.observe(tf, &rest, observe(107.0, 300_100)).unwrap().open, 107.0);
     }
 
     #[test]

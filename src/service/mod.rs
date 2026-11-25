@@ -237,6 +237,25 @@ pub(crate) fn fetch_klines_with_session(
     }
 }
 
+/// Yahoo live-chart history with its originating REST request timestamp.
+pub(crate) fn fetch_yahoo_chart_observed(
+    symbol: &str,
+    timeframe: Timeframe,
+    limit: u32,
+    extended: bool,
+) -> Result<(Vec<Kline>, i64), ProviderError> {
+    let source = DataSource::Yahoo;
+    let extended = extended && source.yahoo_stream_symbol(symbol) && timeframe.is_intraday();
+    let fetch = |limit| market::yahoo::YAHOO.fetch_klines_with_session(symbol, timeframe, limit, extended).map(normalize);
+    match cache::policy(source, timeframe) {
+        Some(policy) => cache::fetch_observed(source, symbol, timeframe, limit, policy, extended, fetch),
+        None => {
+            let started = crate::clock::now_ms();
+            fetch(limit).map(|candles| (candles, started))
+        }
+    }
+}
+
 /// A chart's candles and, for a streamed source that folds its candles, the base candles the
 /// newest of them is made of.
 #[derive(Clone, Debug, Default, PartialEq)]

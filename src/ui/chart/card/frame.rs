@@ -571,7 +571,9 @@ impl ChartCard {
             Default::default()
         };
         let regular = levels.regular;
-        if regular.is_none() {
+        let ordinary_price = tag_candles.as_deref().unwrap_or(candles).last().map(|bar| bar.close);
+        let draw_default = regular.is_none() && !levels.extended.is_some_and(|(_, price)| ordinary_price == Some(price));
+        if draw_default {
             self.draw_last_price(
                 &main_painter,
                 plot,
@@ -604,7 +606,7 @@ impl ChartCard {
             style,
             main_tag_y,
         );
-        self.draw_yahoo_session_levels(&main_painter, plot, rect, scale, style, levels, regular.is_none().then_some(main_tag_y).flatten());
+        self.draw_yahoo_session_levels(&main_painter, plot, rect, scale, style, levels, draw_default.then_some(main_tag_y).flatten());
         self.draw_time_axis(painter, rect, shown, &ticks, &x_for, plot.right(), style);
         // The tags of the lines at a price or a time sit on the axes, which the drawings'
         // clipped painter cannot reach.

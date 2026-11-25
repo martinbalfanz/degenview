@@ -442,9 +442,7 @@ impl ChartCard {
             };
             (price, label, theme::pick(Color32::from_rgb(148, 91, 221), Color32::from_rgb(111, 61, 183)))
         });
-        let regular_y = regular.map(|(price, _, _)| scale.y(price))
-            .filter(|y| y.is_finite() && plot.y_range().contains(*y));
-        let mut occupied = regular_y.or(fallback_y);
+        let mut occupied = fallback_y;
         for (price, label, color) in regular.into_iter().chain(extended) {
             let y = scale.y(price);
             if !y.is_finite() || !plot.y_range().contains(y) {
@@ -454,9 +452,7 @@ impl ChartCard {
             if let Some(other) = occupied {
                 // Reserve the first tag; when near it, move the second tag
                 // rather than moving the price line itself.
-                if regular_y != Some(y) || label != regular.map_or("", |(_, label, _)| label) {
-                    tag_y = yahoo_secondary_tag_y(tag_y, other, half, plot);
-                }
+                tag_y = yahoo_secondary_tag_y(tag_y, other, half, plot);
             }
             occupied = Some(tag_y);
             canvas::horizontal(painter, (plot.left(), plot.right()), y, canvas::LineStyle {

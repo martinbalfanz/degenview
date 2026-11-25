@@ -56,6 +56,7 @@ pub fn policy(source: DataSource, timeframe: Timeframe) -> Option<Policy> {
 
 struct Entry {
     fetched: Instant,
+    request_started_ms: i64,
     /// The `limit` the series was fetched for: a request for more cannot be answered from it.
     requested: u32,
     candles: Vec<Kline>,
@@ -163,6 +164,20 @@ pub fn fetch(
     extended: bool,
     fetch: impl Fn(u32) -> Result<Vec<Kline>, ProviderError>,
 ) -> Result<Vec<Kline>, ProviderError> {
+    fetch_observed(source, symbol, timeframe, limit, policy, extended, fetch).map(|(candles, _)| candles)
+}
+
+/// Carry the originating provider request time with the exact returned series.
+/// A cache hit retains that time; it must never advance a reconciliation floor.
+pub(super) fn fetch_observed(
+    source: DataSource,
+    symbol: &str,
+    timeframe: Timeframe,
+    limit: u32,
+    policy: Policy,
+    extended: bool,
+    fetch: impl Fn(u32) -> Result<Vec<Kline>, ProviderError>,
+) -> Result<(Vec<Kline>, i64), ProviderError> {
     let key = key(source, symbol, timeframe, extended);
     let flight = {
         let mut held = held()
@@ -189,16 +204,18 @@ pub fn fetch(
             .map(|entry| {
                 (
                     entry.fetched.elapsed(),
+                    entry.request_started_ms,
                     entry.requested,
                     entry.candles.clone(),
                 )
             })
     };
-    if let Some((age, requested, candles)) = current {
+    if let Some((age, requested_at, requested, candles)) = current {
         if age < policy.fresh {
-            return Ok(newest(&candles, limit));
+            return Ok((newest(&candles, limit), requested_at));
         }
         if age < MAX_PATCH_AGE {
+            let requested_at = crate::clock::now_ms();
             match fetch(TAIL_LIMIT) {
                 Ok(tail) => {
                     // Yahoo's historical OHLC can be revised after corporate
@@ -206,7 +223,7 @@ pub fn fetch(
                     let revised = source == DataSource::Yahoo
                         && historical_prices_revised(&candles, &tail);
                     if !revised && let Some(merged) = patched(&candles, &tail) {
-                        return Ok(store(&key, requested, merged, limit));
+                        return Ok((store(&key, requested, merged, limit, requested_at), requested_at));
                     }
                 }
                 // Asking again whole would only spend the limit that was just refused.
@@ -217,12 +234,13 @@ pub fn fetch(
             }
         }
     }
+    let requested_at = crate::clock::now_ms();
     let candles = fetch(limit)?;
-    Ok(store(&key, limit, candles, limit))
+    Ok((store(&key, limit, candles, limit, requested_at), requested_at))
 }
 
 /// Keeps `candles` and returns the newest `limit` of them.
-fn store(key: &str, requested: u32, mut candles: Vec<Kline>, limit: u32) -> Vec<Kline> {
+fn store(key: &str, requested: u32, mut candles: Vec<Kline>, limit: u32, request_started_ms: i64) -> Vec<Kline> {
     // A series stays as long as it was asked for, however many buckets arrived since.
     if candles.len() > requested as usize {
         candles.drain(..candles.len() - requested as usize);
@@ -243,6 +261,7 @@ fn store(key: &str, requested: u32, mut candles: Vec<Kline>, limit: u32) -> Vec<
             key.to_owned(),
             Entry {
                 fetched: Instant::now(),
+                request_started_ms,
                 requested,
                 candles,
             },
@@ -598,9 +617,25 @@ mod tests {
     }
 
     #[test]
+    fn yahoo_cached_series_keeps_original_request_timestamp() {
+        let source = DataSource::Yahoo;
+        let symbol = "WATERMARK";
+        let timeframe = Timeframe::HOUR_1;
+        let key = key(source, symbol, timeframe, false);
+        store(&key, 2, series(0..2), 2, 12345);
+        let (bars, started) = fetch_observed(source, symbol, timeframe, 2, LONG, false, |_| {
+            panic!("fresh cache should not call provider")
+        }).unwrap();
+        assert_eq!(bars, series(0..2));
+        assert_eq!(started, 12345);
+        forget_where(|candidate| candidate == &key);
+    }
+
+    #[test]
     fn yahoo_warm_session_cache_requires_fresh_and_sufficient_history() {
         let entry = Entry {
             fetched: Instant::now(),
+            request_started_ms: 0,
             requested: 10,
             candles: series(0..10),
         };
@@ -619,8 +654,8 @@ mod tests {
         let extended = series(3..5);
         let regular_key = key(source, symbol, timeframe, false);
         let extended_key = key(source, symbol, timeframe, true);
-        store(&regular_key, 2, regular.clone(), 2);
-        store(&extended_key, 2, extended.clone(), 2);
+        store(&regular_key, 2, regular.clone(), 2, 123);
+        store(&extended_key, 2, extended.clone(), 2, 456);
         // Another test may briefly hold the global table; retry only in the test.
         let peek = |mode| {
             (0..1000).find_map(|_| {

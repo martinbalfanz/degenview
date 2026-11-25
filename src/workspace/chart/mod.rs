@@ -103,6 +103,7 @@ pub(super) struct Fetched {
     /// The base candles of the newest candle's bucket (see [`service::LiveCandles`]).
     bars: Vec<Kline>,
     series: Vec<(String, Vec<Kline>)>,
+    yahoo_request_started_ms: Option<i64>,
 }
 
 impl Fetched {
@@ -117,6 +118,7 @@ impl Fetched {
             candles,
             bars: Vec::new(),
             series: histories,
+            yahoo_request_started_ms: None,
         })
     }
 }
@@ -410,7 +412,10 @@ impl Chart {
             {
                 return;
             }
-            let result = if choices.is_empty() {
+            let result = if choices.is_empty() && source.yahoo_stream_symbol(&symbol) && timeframe.is_intraday() {
+                service::fetch_yahoo_chart_observed(&symbol, timeframe, CANDLE_LIMIT, extended)
+                    .map(|(candles, started)| Fetched { candles, bars: Vec::new(), series: Vec::new(), yahoo_request_started_ms: Some(started) })
+            } else if choices.is_empty() {
                 service::fetch_klines_live_with_session(
                     source,
                     &symbol,
@@ -422,6 +427,7 @@ impl Chart {
                     candles: live.candles,
                     bars: live.bars,
                     series: Vec::new(),
+                    yahoo_request_started_ms: None,
                 })
             } else {
                 Fetched::from_choices(service::fetch_choices(
@@ -608,6 +614,11 @@ impl Chart {
                 );
                 self.candles =
                     market::history::with_older(&self.candles, fresh, self.older.keeps_older());
+                if let Some(started) = fetched.yahoo_request_started_ms
+                    && let Some(last) = self.candles.last()
+                {
+                    self.yahoo_preview.reconcile_rest(timeframe, last, started);
+                }
                 if !self.pm_series.is_empty() {
                     self.chart
                         .set_series(SeriesLine::build(&self.pm_series, fetched.series));
@@ -741,6 +752,7 @@ mod tests {
             candles: vec![candle(20, 2.0)],
             bars: Vec::new(),
             series: Vec::new(),
+            yahoo_request_started_ms: None,
         })).is_err());
         assert!(older_tx.send(Ok(vec![candle(1, 1.0)])).is_err());
 
@@ -836,6 +848,7 @@ mod tests {
                 candles: vec![candle(11, 2.0), candle(12, 2.0), candle(13, 2.0)],
                 bars: Vec::new(),
                 series: Vec::new(),
+                yahoo_request_started_ms: None,
             }))
             .unwrap();
         chart.inbox = Some(receiver);
@@ -853,6 +866,7 @@ mod tests {
                 candles: vec![candle(2, 2.0), candle(3, 2.0)],
                 bars: Vec::new(),
                 series: Vec::new(),
+                yahoo_request_started_ms: None,
             }))
             .unwrap();
         chart.inbox = Some(receiver);
@@ -879,6 +893,7 @@ mod tests {
                 candles: vec![candle(1, 1.0), candle(2, 2.0)],
                 bars: Vec::new(),
                 series: Vec::new(),
+                yahoo_request_started_ms: None,
             }))
             .unwrap();
         chart.inbox = Some(receiver);
