@@ -84,6 +84,7 @@ impl InstrumentId {
                     None => format!("{}/USD", crate::model::market::source::kraken_asset(&id)),
                 }
             }
+            DataSource::Yahoo => self.symbol.to_uppercase(),
             _ => self.symbol.clone(),
         }
     }
@@ -112,7 +113,7 @@ impl InstrumentId {
             | DataSource::Okx
             | DataSource::Kraken
             | DataSource::Gate => Self::new(source, symbol).api_symbol(),
-            DataSource::Alpaca => symbol.to_uppercase(),
+            DataSource::Alpaca | DataSource::Yahoo => symbol.to_uppercase(),
             DataSource::CoinGecko => symbol.to_lowercase(),
             _ => symbol.to_owned(),
         }

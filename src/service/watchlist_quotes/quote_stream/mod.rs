@@ -6,6 +6,7 @@ mod coinbase;
 mod gateio;
 mod kraken;
 mod okx;
+mod yahoo;
 
 use crate::model::DataSource;
 use crate::model::watchlist::quote::SourceQuote;
@@ -44,12 +45,24 @@ impl QuoteSocket {
             DataSource::Kraken => (kraken::session(&products), kraken::parse_tick),
             DataSource::Bybit => (bybit::session(&products), bybit::parse_tick),
             DataSource::Gate => (gateio::session(&products), gateio::parse_tick),
+            DataSource::Yahoo => (yahoo::session(&products), yahoo::parse_tick),
             _ => return None,
         };
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread_shutdown = Arc::clone(&shutdown);
         std::thread::spawn(move || {
-            session.run(&thread_shutdown, |text| {
+            session.run_frames(&thread_shutdown, |frame| {
+                use crate::service::net::ws::Frame;
+                let text = match frame {
+                    Frame::Text(text) => text,
+                    Frame::Binary(bytes) if source == DataSource::Yahoo => {
+                        let Ok(text) = std::str::from_utf8(bytes) else {
+                            return true;
+                        };
+                        text
+                    }
+                    Frame::Binary(_) => return true,
+                };
                 parse(text).is_none_or(|tick| sender.send(tick).is_ok())
             });
         });

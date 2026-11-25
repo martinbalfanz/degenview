@@ -49,7 +49,7 @@ pub fn read(name: &str, context: &MarketContext) -> Option<RuntimeValue> {
                 .unwrap_or(RuntimeValue::Na),
         ),
         "syminfo.timezone" => Some(RuntimeValue::String(
-            MarketSessions::for_kind(&context.symbol.kind)
+            MarketSessions::for_symbol(&context.symbol.kind, &context.symbol.ticker_id)
                 .zone()
                 .to_owned(),
         )),
@@ -113,7 +113,7 @@ pub fn read(name: &str, context: &MarketContext) -> Option<RuntimeValue> {
 /// `session.isfirstbar` and `islastbar` mean the same as their `_regular` forms. A bar of a day or
 /// more is a whole session of its own.
 fn session_flag(name: &str, context: &MarketContext) -> bool {
-    let sessions = MarketSessions::for_kind(&context.symbol.kind);
+    let sessions = MarketSessions::for_symbol(&context.symbol.kind, &context.symbol.ticker_id);
     let open = context.bar.open_time;
     let length = (context.bar_seconds * 1_000.0).round() as i64;
     let intraday = context.bar_seconds > 0.0 && context.bar_seconds < 86_400.0;

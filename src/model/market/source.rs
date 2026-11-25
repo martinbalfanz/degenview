@@ -16,9 +16,238 @@ pub enum DataSource {
     CoinGecko,
     DexScreener,
     Alpaca,
+    Yahoo,
     Polymarket,
     Kalshi,
     CoinMarketCap,
+}
+
+/// Supported non-US Yahoo exchange profiles. The suffix is only a candidate;
+/// chart and quote metadata must agree before prices are accepted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum YahooMarket {
+    Xetra,
+    Paris,
+    Amsterdam,
+    Brussels,
+    Milan,
+    Madrid,
+    Zurich,
+    London,
+    Toronto,
+}
+
+impl YahooMarket {
+    pub fn for_symbol(symbol: &str) -> Option<Self> {
+        let upper = symbol.trim().to_ascii_uppercase();
+        match upper.as_str() {
+            "^GDAXI" => return Some(Self::Xetra),
+            "^FCHI" => return Some(Self::Paris),
+            "^AEX" => return Some(Self::Amsterdam),
+            "^BFX" => return Some(Self::Brussels),
+            "FTSEMIB.MI" => return Some(Self::Milan),
+            "^IBEX" => return Some(Self::Madrid),
+            "^SSMI" => return Some(Self::Zurich),
+            "^FTSE" => return Some(Self::London),
+            "^GSPTSE" => return Some(Self::Toronto),
+            _ => {}
+        }
+        let (root, suffix) = upper.rsplit_once('.')?;
+        if root.is_empty() || !root.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            return None;
+        }
+        Some(match suffix {
+            "DE" => Self::Xetra,
+            "PA" => Self::Paris,
+            "AS" => Self::Amsterdam,
+            "BR" => Self::Brussels,
+            "MI" => Self::Milan,
+            "MC" => Self::Madrid,
+            "SW" => Self::Zurich,
+            "L" => Self::London,
+            "TO" => Self::Toronto,
+            _ => return None,
+        })
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Xetra => "Xetra",
+            Self::Paris => "Euronext Paris",
+            Self::Amsterdam => "Euronext Amsterdam",
+            Self::Brussels => "Euronext Brussels",
+            Self::Milan => "Euronext Milan",
+            Self::Madrid => "Madrid",
+            Self::Zurich => "SIX Swiss Exchange",
+            Self::London => "London Stock Exchange",
+            Self::Toronto => "Toronto Stock Exchange",
+        }
+    }
+
+    pub const fn exchange(self) -> &'static str {
+        match self {
+            Self::Xetra => "GER",
+            Self::Paris => "PAR",
+            Self::Amsterdam => "AMS",
+            Self::Brussels => "BRU",
+            Self::Milan => "MIL",
+            Self::Madrid => "MCE",
+            Self::Zurich => "EBS",
+            Self::London => "LSE",
+            Self::Toronto => "TOR",
+        }
+    }
+
+    pub const fn currency(self) -> &'static str {
+        match self {
+            Self::London => "GBP",
+            Self::Zurich => "CHF",
+            Self::Toronto => "CAD",
+            _ => "EUR",
+        }
+    }
+
+    pub const fn timezone(self) -> &'static str {
+        match self {
+            Self::Xetra => "Europe/Berlin",
+            Self::Paris => "Europe/Paris",
+            Self::Amsterdam => "Europe/Amsterdam",
+            Self::Brussels => "Europe/Brussels",
+            Self::Milan => "Europe/Rome",
+            Self::Madrid => "Europe/Madrid",
+            Self::Zurich => "Europe/Zurich",
+            Self::London => "Europe/London",
+            Self::Toronto => "America/Toronto",
+        }
+    }
+
+    /// Core weekday session, excluding auctions and special/holiday hours.
+    pub const fn regular_session(self) -> &'static str {
+        match self {
+            Self::London => "0800-1630:23456",
+            Self::Toronto => "0930-1600:23456",
+            Self::Zurich => "0900-1720:23456",
+            _ => "0900-1730:23456",
+        }
+    }
+
+    /// Scale a vendor price to the profile's displayed currency. GBp is
+    /// pence, not pounds. Do not case-fold currency units or accept other
+    /// currency listings on the same exchange.
+    pub fn price_scale(self, vendor_currency: &str) -> Option<f64> {
+        if self == Self::London && matches!(vendor_currency, "GBp" | "GBX") {
+            Some(0.01)
+        } else if vendor_currency == self.currency() {
+            Some(1.0)
+        } else {
+            None
+        }
+    }
+}
+
+/// A deliberately limited set of Yahoo currency pairs and rolling futures.
+/// These are charting instruments, not executable contracts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum YahooDerivative {
+    Forex {
+        base: &'static str,
+        quote: &'static str,
+    },
+    Future {
+        root: &'static str,
+        exchange: &'static str,
+    },
+}
+
+impl YahooDerivative {
+    pub fn for_symbol(symbol: &str) -> Option<Self> {
+        let upper = symbol.trim().to_ascii_uppercase();
+        let (base, quote) = match upper.as_str() {
+            "EURUSD=X" => ("EUR", "USD"),
+            "GBPUSD=X" => ("GBP", "USD"),
+            "USDJPY=X" | "JPY=X" => ("USD", "JPY"),
+            "USDCHF=X" | "CHF=X" => ("USD", "CHF"),
+            "USDCAD=X" | "CAD=X" => ("USD", "CAD"),
+            "AUDUSD=X" => ("AUD", "USD"),
+            "NZDUSD=X" => ("NZD", "USD"),
+            "EURGBP=X" => ("EUR", "GBP"),
+            "EURJPY=X" => ("EUR", "JPY"),
+            "ES=F" => {
+                return Some(Self::Future {
+                    root: "ES",
+                    exchange: "CME",
+                });
+            }
+            "NQ=F" => {
+                return Some(Self::Future {
+                    root: "NQ",
+                    exchange: "CME",
+                });
+            }
+            "GC=F" => {
+                return Some(Self::Future {
+                    root: "GC",
+                    exchange: "CMX",
+                });
+            }
+            "CL=F" => {
+                return Some(Self::Future {
+                    root: "CL",
+                    exchange: "NYM",
+                });
+            }
+            _ => return None,
+        };
+        Some(Self::Forex { base, quote })
+    }
+
+    pub const fn kind(self) -> &'static str {
+        match self {
+            Self::Forex { .. } => "forex",
+            Self::Future { .. } => "futures",
+        }
+    }
+
+    pub const fn currency(self) -> &'static str {
+        match self {
+            Self::Forex { quote, .. } => quote,
+            Self::Future { .. } => "USD",
+        }
+    }
+
+    pub const fn base_currency(self) -> Option<&'static str> {
+        match self {
+            Self::Forex { base, .. } => Some(base),
+            Self::Future { .. } => None,
+        }
+    }
+
+    pub const fn has_volume(self) -> bool {
+        matches!(self, Self::Future { .. })
+    }
+
+    /// Session conventions used for grouping bars (not a holiday calendar).
+    pub const fn timezone(self) -> &'static str {
+        match self {
+            Self::Forex { .. } => "America/New_York",
+            Self::Future { .. } => "America/Chicago",
+        }
+    }
+
+    pub const fn regular_session(self) -> &'static str {
+        match self {
+            Self::Forex { .. } => "1700-2400:12345,0000-1700:23456",
+            Self::Future { .. } => "1700-1600:12345",
+        }
+    }
+
+    /// Date of the trading session, with the evening assigned to the next day.
+    /// Return a UTC-midnight date label, not the actual session open instant.
+    pub fn trading_day_ms(self, timestamp_ms: i64) -> i64 {
+        let offset = crate::pine::time::zone_offset_secs(Some(self.timezone()), timestamp_ms);
+        let local = timestamp_ms + offset * 1_000;
+        (local + 7 * 3_600_000).div_euclid(86_400_000) * 86_400_000
+    }
 }
 
 impl DataSource {
@@ -34,6 +263,7 @@ impl DataSource {
             Self::CoinGecko => "CoinGecko",
             Self::DexScreener => "DEXScreener",
             Self::Alpaca => "Alpaca (IEX)",
+            Self::Yahoo => "Yahoo Finance",
             Self::Polymarket => "Polymarket",
             Self::Kalshi => "Kalshi",
             Self::CoinMarketCap => "CoinMarketCap",
@@ -53,6 +283,7 @@ impl DataSource {
             Self::CoinGecko => "COINGECKO",
             Self::DexScreener => "DEXSCREENER",
             Self::Alpaca => "ALPACA",
+            Self::Yahoo => "YAHOO",
             Self::Polymarket => "POLYMARKET",
             Self::Kalshi => "KALSHI",
             Self::CoinMarketCap => "CMC",
@@ -61,7 +292,7 @@ impl DataSource {
 
     /// The source a `watchlist_slug` names, in any case.
     pub fn from_watchlist_slug(slug: &str) -> Option<Self> {
-        const ALL: [DataSource; 13] = [
+        const ALL: [DataSource; 14] = [
             DataSource::Binance,
             DataSource::Coinbase,
             DataSource::Okx,
@@ -72,6 +303,7 @@ impl DataSource {
             DataSource::CoinGecko,
             DataSource::DexScreener,
             DataSource::Alpaca,
+            DataSource::Yahoo,
             DataSource::Polymarket,
             DataSource::Kalshi,
             DataSource::CoinMarketCap,
@@ -92,13 +324,25 @@ impl DataSource {
     ];
 
     /// The sources whose watchlist prices come from a shared ticker socket, REST filling in.
-    pub const QUOTE_STREAMS: [DataSource; 5] = [
+    pub const QUOTE_STREAMS: [DataSource; 6] = [
         DataSource::Coinbase,
         DataSource::Okx,
         DataSource::Kraken,
         DataSource::Bybit,
         DataSource::Gate,
+        DataSource::Yahoo,
     ];
+
+    /// First Yahoo streaming scope: USD equities and ETFs, not indexes, FX,
+    /// futures or non-US listings. REST metadata still has to validate them.
+    pub fn yahoo_stream_symbol(self, symbol: &str) -> bool {
+        self == Self::Yahoo
+            && !symbol.is_empty()
+            && symbol.len() <= 12
+            && symbol
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    }
 
     /// Whether watchlist prices of this source come from a ticker socket.
     pub fn streams_quotes(self) -> bool {
@@ -108,6 +352,79 @@ impl DataSource {
     /// Whether this source quotes probabilities in 0…1, charted as lines.
     pub fn is_prediction_market(self) -> bool {
         matches!(self, Self::Polymarket | Self::Kalshi)
+    }
+
+    /// Providers listed in the stock/index picker (not a session or currency test).
+    pub fn is_us_equity_source(self) -> bool {
+        matches!(self, Self::Alpaca | Self::Yahoo)
+    }
+
+    /// Index tickers supported by Yahoo; validated against vendor metadata.
+    pub fn is_yahoo_index(self, symbol: &str) -> bool {
+        self == Self::Yahoo
+            && matches!(
+                symbol.trim().to_ascii_uppercase().as_str(),
+                "^GSPC"
+                    | "^IXIC"
+                    | "^NDX"
+                    | "^DJI"
+                    | "^RUT"
+                    | "^VIX"
+                    | "^GDAXI"
+                    | "^FCHI"
+                    | "^AEX"
+                    | "^BFX"
+                    | "FTSEMIB.MI"
+                    | "^IBEX"
+                    | "^SSMI"
+                    | "^FTSE"
+                    | "^GSPTSE"
+            )
+    }
+
+    pub fn yahoo_market(self, symbol: &str) -> Option<YahooMarket> {
+        if self == Self::Yahoo {
+            YahooMarket::for_symbol(symbol)
+        } else {
+            None
+        }
+    }
+
+    pub fn yahoo_derivative(self, symbol: &str) -> Option<YahooDerivative> {
+        if self == Self::Yahoo {
+            YahooDerivative::for_symbol(symbol)
+        } else {
+            None
+        }
+    }
+
+    pub fn yahoo_portfolio_excluded(self, symbol: &str) -> bool {
+        self.is_yahoo_index(symbol)
+            || self.yahoo_market(symbol).is_some()
+            || self.yahoo_derivative(symbol).is_some()
+    }
+
+    /// Currency after normalizing the vendor's quote units.
+    pub fn equity_currency(self, symbol: &str) -> Option<&'static str> {
+        if let Some(derivative) = self.yahoo_derivative(symbol) {
+            Some(derivative.currency())
+        } else if let Some(market) = self.yahoo_market(symbol) {
+            Some(market.currency())
+        } else if self.is_us_equity_source() {
+            Some("USD")
+        } else {
+            None
+        }
+    }
+
+    /// Index levels are not traded shares. Do not present index feed volume
+    /// (which may be absent or an aggregate) as ordinary share volume.
+    pub fn provides_market_volume(self, symbol: &str) -> bool {
+        self.provides_volume()
+            && !self.is_yahoo_index(symbol)
+            && self
+                .yahoo_derivative(symbol)
+                .is_none_or(|market| market.has_volume())
     }
 
     /// Whether this source reports per-candle turnover for the volume bars to draw. CoinGecko's
@@ -124,6 +441,7 @@ impl DataSource {
                 | Self::Mexc
                 | Self::DexScreener
                 | Self::Alpaca
+                | Self::Yahoo
         )
     }
 
@@ -152,7 +470,8 @@ impl DataSource {
             | Self::Gate
             | Self::Mexc
             | Self::CoinGecko
-            | Self::Alpaca => raw.to_uppercase(),
+            | Self::Alpaca
+            | Self::Yahoo => raw.to_uppercase(),
             Self::CoinMarketCap => super::cmc::title(raw).to_owned(),
             _ => raw.to_owned(),
         }
@@ -165,6 +484,7 @@ impl DataSource {
         let upper = symbol.trim().to_uppercase();
         let head = upper.split(['/', '-', ' ', '_']).next().unwrap_or(&upper);
         match self {
+            Self::Yahoo => upper.split(" — ").next().unwrap_or(&upper),
             // A one-letter "base" is a bare wrapped asset (WBTC, WETH), not a pair.
             Self::Binance | Self::Bybit => split_binance_pair(head)
                 .map(|(base, _)| base)
@@ -335,5 +655,55 @@ mod tests {
         assert!(!DataSource::CoinGecko.provides_volume());
         assert!(!DataSource::Polymarket.provides_volume());
         assert!(!DataSource::CoinMarketCap.provides_volume());
+    }
+}
+
+#[cfg(test)]
+mod yahoo_market_tests {
+    use super::*;
+
+    #[test]
+    fn exchange_profiles_are_source_qualified_and_keep_currency_units() {
+        assert_eq!(
+            DataSource::Yahoo.yahoo_market("air.pa"),
+            Some(YahooMarket::Paris)
+        );
+        assert_eq!(
+            DataSource::Yahoo.yahoo_market("^FTSE"),
+            Some(YahooMarket::London)
+        );
+        assert_eq!(DataSource::Yahoo.equity_currency("RY.TO"), Some("CAD"));
+        assert_eq!(DataSource::Yahoo.equity_currency("NESN.SW"), Some("CHF"));
+        assert_eq!(DataSource::Yahoo.yahoo_market("BRK-B"), None);
+        assert_eq!(DataSource::Alpaca.yahoo_market("AIR.PA"), None);
+        assert_eq!(YahooMarket::London.price_scale("GBp"), Some(0.01));
+        assert_eq!(YahooMarket::London.price_scale("GBX"), Some(0.01));
+        assert_eq!(YahooMarket::London.price_scale("GBP"), Some(1.0));
+        assert_eq!(YahooMarket::London.price_scale("USD"), None);
+    }
+}
+
+#[cfg(test)]
+mod yahoo_derivative_tests {
+    use super::*;
+
+    #[test]
+    fn fx_pairs_and_futures_have_distinct_currency_and_volume() {
+        let fx = DataSource::Yahoo.yahoo_derivative("EURJPY=X").unwrap();
+        assert_eq!(fx.base_currency(), Some("EUR"));
+        assert_eq!(fx.currency(), "JPY");
+        assert!(!fx.has_volume());
+        assert_eq!(
+            DataSource::Yahoo.yahoo_derivative("JPY=X"),
+            DataSource::Yahoo.yahoo_derivative("USDJPY=X")
+        );
+        assert!(
+            DataSource::Yahoo
+                .yahoo_derivative("ES=F")
+                .unwrap()
+                .has_volume()
+        );
+        assert!(!DataSource::Yahoo.provides_market_volume("EURUSD=X"));
+        assert!(DataSource::Yahoo.provides_market_volume("GC=F"));
     }
 }

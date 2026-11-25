@@ -22,6 +22,7 @@ use crate::i18n::tr;
 use crate::model::market;
 use crate::model::market::history::OlderHistory;
 use crate::model::market::live::{LiveFold, LiveMark};
+use crate::model::market::yahoo_session::PolicySnapshot;
 use crate::model::overlay::feed::{OverlayFeed, OverlayStatus};
 use crate::model::overlay::{OverlayId, OverlayList};
 use crate::model::{DataSource, InstrumentId, Kline, Timeframe};
@@ -49,6 +50,16 @@ const SLOW_RETRY_AFTER: Duration = Duration::from_secs(45);
 pub(super) trait OverlayBackend: Send + Sync + 'static {
     /// Runs `job` off the UI thread, on `source`'s lane of the work queue.
     fn submit(&self, source: DataSource, job: Box<dyn FnOnce() + Send>);
+    /// Optional nonblocking read of a fresh, session-specific history.
+    fn cached_session(
+        &self,
+        _instrument: &InstrumentId,
+        _timeframe: Timeframe,
+        _extended: bool,
+    ) -> Option<Vec<Kline>> {
+        None
+    }
+
     /// The newest candles, with the base candles of the newest one's bucket when a live feed
     /// folds them.
     fn klines(
@@ -57,6 +68,7 @@ pub(super) trait OverlayBackend: Send + Sync + 'static {
         symbol: &str,
         timeframe: Timeframe,
         limit: u32,
+        extended: bool,
     ) -> Result<LiveCandles, ProviderError>;
     /// A page of candles ending before `end_ms`.
     fn page(
@@ -65,6 +77,7 @@ pub(super) trait OverlayBackend: Send + Sync + 'static {
         symbol: &str,
         timeframe: Timeframe,
         end_ms: i64,
+        extended: bool,
     ) -> Result<Vec<Kline>, ProviderError>;
 }
 
@@ -75,14 +88,27 @@ impl OverlayBackend for ServiceBackend {
         service::work_queue::submit_for(source, job);
     }
 
+    fn cached_session(
+        &self,
+        instrument: &InstrumentId,
+        timeframe: Timeframe,
+        extended: bool,
+    ) -> Option<Vec<Kline>> {
+        if instrument.source != DataSource::Yahoo {
+            return None;
+        }
+        service::cache::peek_yahoo_session(&instrument.symbol, timeframe, CANDLE_LIMIT, extended)
+    }
+
     fn klines(
         &self,
         source: DataSource,
         symbol: &str,
         timeframe: Timeframe,
         limit: u32,
+        extended: bool,
     ) -> Result<LiveCandles, ProviderError> {
-        service::fetch_klines_live(source, symbol, timeframe, limit)
+        service::fetch_klines_live_with_session(source, symbol, timeframe, limit, extended)
     }
 
     fn page(
@@ -91,8 +117,17 @@ impl OverlayBackend for ServiceBackend {
         symbol: &str,
         timeframe: Timeframe,
         end_ms: i64,
+        extended: bool,
     ) -> Result<Vec<Kline>, ProviderError> {
-        service::fetch_klines_range(source, symbol, timeframe, 0, end_ms, market::history::PAGE)
+        service::fetch_klines_range_with_session(
+            source,
+            symbol,
+            timeframe,
+            0,
+            end_ms,
+            market::history::PAGE,
+            extended,
+        )
     }
 }
 
@@ -113,6 +148,7 @@ struct Holder {
 
 struct Series {
     instrument: InstrumentId,
+    policy: PolicySnapshot,
     holders: HashMap<u64, Holder>,
     candles: Arc<Vec<Kline>>,
     revision: u64,
@@ -134,6 +170,7 @@ impl Series {
     fn new(instrument: InstrumentId) -> Self {
         Self {
             instrument,
+            policy: PolicySnapshot::default(),
             holders: HashMap::new(),
             candles: Arc::new(Vec::new()),
             revision: 0,
@@ -354,6 +391,16 @@ impl OverlayHub {
 
     /// Drains answers, then starts what is due within the in-flight budget.
     pub(super) fn poll(&mut self, timeframe: Timeframe, ctx: &egui::Context, now: Instant) {
+        self.poll_with_session(timeframe, ctx, now, market::yahoo_session::snapshot());
+    }
+
+    fn poll_with_session(
+        &mut self,
+        timeframe: Timeframe,
+        ctx: &egui::Context,
+        now: Instant,
+        policy: PolicySnapshot,
+    ) {
         if self.timeframe != Some(timeframe) {
             if self.timeframe.is_some() {
                 for series in self.series.values_mut() {
@@ -365,6 +412,24 @@ impl OverlayHub {
         }
         let mut changed = false;
         for series in self.series.values_mut() {
+            let mode = policy.effective(
+                series.instrument.source,
+                &series.instrument.symbol,
+                timeframe,
+            );
+            if series.policy != mode {
+                series.reset();
+                series.policy = mode;
+                if series.shown()
+                    && let Some(candles) =
+                        self.backend
+                            .cached_session(&series.instrument, timeframe, mode.extended)
+                {
+                    series.set_candles(candles);
+                    series.status = OverlayStatus::Ready;
+                }
+                changed = true;
+            }
             changed |= receive_fetch(series, timeframe, now);
             changed |= receive_older(series, now);
         }
@@ -415,7 +480,7 @@ impl OverlayHub {
                 2 | 0 => request_newest(series, &backend, timeframe, ctx, now),
                 _ => request_older(series, &backend, timeframe, ctx),
             }
-            if class == 0 {
+            if class == 0 && series.status != OverlayStatus::Ready {
                 series.status = OverlayStatus::Loading;
             }
             free -= 1;
@@ -545,6 +610,7 @@ fn request_newest(
 ) {
     let (sender, receiver) = mpsc::channel();
     let instrument = series.instrument.clone();
+    let extended = series.policy.extended;
     let generation = series.generation.fetch_add(1, Ordering::AcqRel) + 1;
     let current: Weak<AtomicU64> = Arc::downgrade(&series.generation);
     let (worker, repaint) = (backend.clone(), ctx.clone());
@@ -562,6 +628,7 @@ fn request_newest(
                 &instrument.symbol,
                 timeframe,
                 CANDLE_LIMIT,
+                extended,
             );
             let _ = sender.send(result);
             repaint.request_repaint();
@@ -582,11 +649,26 @@ fn request_older(
     };
     let (sender, receiver) = mpsc::channel();
     let instrument = series.instrument.clone();
+    let extended = series.policy.extended;
+    let generation = series.generation.fetch_add(1, Ordering::AcqRel) + 1;
+    let current = Arc::downgrade(&series.generation);
     let (worker, repaint) = (backend.clone(), ctx.clone());
     backend.submit(
         instrument.source,
         Box::new(move || {
-            let page = worker.page(instrument.source, &instrument.symbol, timeframe, end);
+            if !current
+                .upgrade()
+                .is_some_and(|state| state.load(Ordering::Acquire) == generation)
+            {
+                return;
+            }
+            let page = worker.page(
+                instrument.source,
+                &instrument.symbol,
+                timeframe,
+                end,
+                extended,
+            );
             let _ = sender.send(page);
             repaint.request_repaint();
         }),
@@ -621,6 +703,14 @@ fn receive_fetch(series: &mut Series, timeframe: Timeframe, now: Instant) -> boo
                 live_open,
                 CANDLE_LIMIT as usize,
             );
+            if series.instrument.source == DataSource::Yahoo
+                && market::history::historical_prices_revised(&series.candles, &merged)
+            {
+                // A completed-price revision can invalidate older pages.
+                series.generation.fetch_add(1, Ordering::AcqRel);
+                series.older_inbox = None;
+                series.older = OlderHistory::default();
+            }
             let candles =
                 market::history::with_older(&series.candles, merged, series.older.keeps_older());
             series.set_candles(candles);

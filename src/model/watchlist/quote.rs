@@ -27,7 +27,7 @@ impl ChangeBasis {
             | DataSource::Mexc
             | DataSource::CoinGecko
             | DataSource::DexScreener => Self::Rolling24h,
-            DataSource::Alpaca => Self::PreviousClose,
+            DataSource::Alpaca | DataSource::Yahoo => Self::PreviousClose,
             DataSource::Polymarket | DataSource::Kalshi | DataSource::CoinMarketCap => Self::Window,
         }
     }
@@ -44,6 +44,8 @@ impl ChangeBasis {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Freshness {
     Live,
+    /// A recently received quote from a feed that may be delayed.
+    Delayed,
     Stale,
     MarketClosed,
     Unavailable,
@@ -54,6 +56,7 @@ impl Freshness {
     pub fn label(self) -> &'static str {
         match self {
             Self::Live => tr!("Live"),
+            Self::Delayed => tr!("May be delayed"),
             Self::Stale => tr!("Stale"),
             Self::MarketClosed => tr!("Market closed"),
             Self::Unavailable => tr!("No quote"),
@@ -61,9 +64,14 @@ impl Freshness {
         }
     }
 
-    /// Whether the price can be shown as current.
+    /// Whether the price can be treated as current for live-price consumers.
     pub fn is_current(self) -> bool {
         matches!(self, Self::Live | Self::MarketClosed)
+    }
+
+    /// Whether the provider has recently answered, even if the feed may be delayed.
+    pub fn is_recent(self) -> bool {
+        self.is_current() || self == Self::Delayed
     }
 }
 
@@ -71,6 +79,7 @@ impl Freshness {
 pub enum VolumeKind {
     QuoteCurrency,
     Shares,
+    Contracts,
     Base,
 }
 
@@ -158,7 +167,11 @@ impl WatchlistQuote {
             change_basis: Some(ChangeBasis::for_source(source)),
             volume: quote.volume_24h,
             volume_kind: quote.volume_kind,
-            timestamp_ms: quote.timestamp_ms.or(Some(received_at_ms)),
+            timestamp_ms: if source == DataSource::Yahoo {
+                quote.timestamp_ms
+            } else {
+                quote.timestamp_ms.or(Some(received_at_ms))
+            },
             freshness: evaluate_freshness(source, received_at_ms, received_at_ms),
             note: None,
         }
@@ -179,6 +192,7 @@ pub fn refresh_interval_secs(source: DataSource) -> u64 {
         | DataSource::Mexc
         | DataSource::Alpaca => 5,
         DataSource::DexScreener => 10,
+        DataSource::Yahoo => 30,
         DataSource::CoinGecko | DataSource::Polymarket | DataSource::Kalshi => 30,
         DataSource::CoinMarketCap => 0,
     }
@@ -196,6 +210,7 @@ pub fn maximum_age_secs(source: DataSource) -> i64 {
         | DataSource::Mexc
         | DataSource::Alpaca => 45,
         DataSource::DexScreener => 60,
+        DataSource::Yahoo => 120,
         // Coinbase is refreshed from REST every 30 seconds when the socket has been quiet.
         DataSource::Coinbase => 90,
         DataSource::CoinGecko | DataSource::Polymarket | DataSource::Kalshi => 120,
@@ -208,6 +223,9 @@ pub fn maximum_age_secs(source: DataSource) -> i64 {
 pub fn evaluate_freshness(source: DataSource, received_at_ms: i64, now_ms: i64) -> Freshness {
     if now_ms - received_at_ms > maximum_age_secs(source) * 1_000 {
         return Freshness::Stale;
+    }
+    if source == DataSource::Yahoo {
+        return Freshness::Delayed;
     }
     if source == DataSource::Alpaca && !is_us_market_open(now_ms) {
         return Freshness::MarketClosed;
@@ -548,5 +566,42 @@ mod tests {
         assert_eq!(compact_number(2_000_000_000_000.0), "2T");
         assert_eq!(compact_number(999.0), "999");
         assert_eq!(compact_number(0.5), "0.5");
+    }
+}
+
+#[cfg(test)]
+mod yahoo_tests {
+    use super::*;
+
+    #[test]
+    fn a_recent_yahoo_quote_is_not_live_and_ages_to_stale() {
+        let now = 1_760_918_400_000;
+        let quote = WatchlistQuote::from_source(
+            DataSource::Yahoo,
+            &SourceQuote {
+                price: 110.0,
+                previous_day_price: Some(100.0),
+                timestamp_ms: Some(now - 900_000),
+                ..SourceQuote::default()
+            },
+            now,
+        );
+        assert_eq!(quote.freshness, Freshness::Delayed);
+        assert!(
+            quote.note.is_none(),
+            "the freshness tile conveys the delay status"
+        );
+        assert!(quote.freshness.is_recent());
+        assert!(!quote.freshness.is_current());
+        assert_eq!(quote.timestamp_ms, Some(now - 900_000));
+        assert_eq!(quote.change_basis, Some(ChangeBasis::PreviousClose));
+        assert_eq!(
+            evaluate_freshness(DataSource::Yahoo, now, now + 120_000),
+            Freshness::Delayed
+        );
+        assert_eq!(
+            evaluate_freshness(DataSource::Yahoo, now, now + 120_001),
+            Freshness::Stale
+        );
     }
 }

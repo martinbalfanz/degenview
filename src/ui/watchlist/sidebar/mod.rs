@@ -148,6 +148,7 @@ pub struct WatchlistSidebarInput<'a> {
     pub lists: &'a [Watchlist],
     pub flags: &'a Flags,
     pub quote: &'a dyn Fn(&InstrumentId) -> Option<WatchlistQuote>,
+    pub extended_quote: &'a dyn Fn(&InstrumentId) -> Option<WatchlistQuote>,
     /// Each market's last month of closes, by `InstrumentId::key()`, for the row charts.
     pub trends: &'a HashMap<String, Trend>,
     /// The market the tab's focused chart shows; the matching row is highlighted.
@@ -420,7 +421,10 @@ pub fn show(
                 .selected_entry
                 .and_then(|id| list.instruments().find(|item| item.id == id))
                 .map_or(0.0, |item| {
-                    detail_height((input.quote)(&item.instrument).as_ref())
+                    detail_height(
+                        (input.quote)(&item.instrument).as_ref(),
+                        (input.extended_quote)(&item.instrument).is_some(),
+                    )
                 });
             if detail_height > 0.0 {
                 egui::Panel::bottom(Id::new(("watchlist-detail", list.id)))

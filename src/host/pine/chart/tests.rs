@@ -181,3 +181,24 @@ fn a_restart_is_a_new_epoch_and_keeps_the_last_valid_output_up() {
     );
     assert!(runs.logs(1).unwrap().epoch > epoch);
 }
+
+#[test]
+fn yahoo_session_revision_discards_applied_script_output_and_restarts_worker() {
+    let symbol = symbol();
+    let bars = hourly(30);
+    let instances = vec![PineInstance::new(1, None, "Plain", PLAIN)];
+    let ctx = egui::Context::default();
+    let mut runs = ChartRuns::default();
+    wait(&mut runs, &frame(&bars, &symbol), &instances, 1);
+    let epoch = runs.logs(1).unwrap().epoch;
+    let policy = PolicySnapshot {
+        extended: false,
+        revision: 2,
+    };
+    let shown = runs.update_with_policy(&ctx, &frame(&bars, &symbol), &instances, policy);
+    assert!(shown.is_empty());
+    assert!(runs.logs(1).unwrap().epoch > epoch);
+    let restarted = runs.logs(1).unwrap().epoch;
+    runs.update_with_policy(&ctx, &frame(&bars, &symbol), &instances, policy);
+    assert_eq!(runs.logs(1).unwrap().epoch, restarted);
+}

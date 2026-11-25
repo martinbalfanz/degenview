@@ -39,14 +39,21 @@ pub(super) fn symbol_info(symbol: &str, source: DataSource, chart_type: ChartTyp
     SymbolInfo {
         ticker: symbol.to_owned(),
         ticker_id: format!("{}:{}", source.watchlist_slug(), symbol),
-        currency: "USD".to_owned(),
-        kind: if source == DataSource::Alpaca {
+        currency: source.equity_currency(symbol).unwrap_or("USD").to_owned(),
+        kind: if let Some(market) = source.yahoo_derivative(symbol) {
+            market.kind()
+        } else if source.is_yahoo_index(symbol) {
+            "index"
+        } else if source.is_us_equity_source() {
             "stock"
         } else {
             "crypto"
         }
         .to_owned(),
-        base_currency: None,
+        base_currency: source
+            .yahoo_derivative(symbol)
+            .and_then(|market| market.base_currency())
+            .map(str::to_owned),
         chart: chart_type.kind(),
     }
 }
@@ -174,12 +181,14 @@ impl ChartCard {
         let (bars, plot) = (data.bars, layout.plot);
         replay.picked_ms = None;
         replay.picked_range = None;
-        let view = self.view(
+        let view = self.view_with_preview(
             self.framing(),
             bars,
             (plot, layout.top_inset),
             data.scale_mode,
             data.chart_type,
+            data.preview,
+            data.session_levels,
         );
         let regions = navigation::Regions {
             plot,
@@ -421,6 +430,12 @@ impl ChartCard {
         } else {
             self.appearance.style.effective_type(source)
         };
+        let chart_type =
+            if chart_type == ChartType::VolumeCandles && !source.provides_market_volume(symbol) {
+                ChartType::Candles
+            } else {
+                chart_type
+            };
         self.drawn_type = chart_type;
         let constructed = self.constructed_series(candles, chart_type);
         // Editing a price-based type's construction (box size, reversal) rebuilds its bars, which
@@ -444,7 +459,7 @@ impl ChartCard {
             bars,
             chart_type,
             line,
-            source.provides_volume(),
+            source.provides_market_volume(symbol),
             indicators,
             &outputs,
         );
@@ -460,6 +475,17 @@ impl ChartCard {
             constructed: constructed.as_deref(),
             outputs: &outputs,
             indicators,
+            preview: self.yahoo_preview.filter(|_| {
+                !replay.active
+                    && !line
+                    && source.yahoo_stream_symbol(symbol)
+                    && chart_type == ChartType::Candles
+            }),
+            session_levels: if !replay.active && source.yahoo_stream_symbol(symbol) {
+                self.yahoo_session_levels
+            } else {
+                Default::default()
+            },
         };
         let layout = self.frame_layout(
             &data,
@@ -477,12 +503,14 @@ impl ChartCard {
         let chart_hovered = ui.rect_contains_pointer(full_rect);
         let regions = self.handle_frame_input(ui, &response, &data, &layout, drawing, replay);
 
-        let Some(view) = self.view(
+        let Some(view) = self.view_with_preview(
             self.framing(),
             bars,
             (plot, layout.top_inset),
             scale_mode,
             chart_type,
+            data.preview,
+            data.session_levels,
         ) else {
             return pointer;
         };
@@ -538,6 +566,7 @@ impl ChartCard {
                 chart_id,
                 replay_active: overlays.replay.active,
                 time_lock: true,
+                indicative_quote: true,
                 crosshair,
             },
             &mut overlays,
@@ -577,7 +606,9 @@ impl ChartCard {
             },
             bars.len(),
         );
-        let time = self.takes_part_in_sync(source).then(|| TimeAxis::new(bars));
+        let time = self
+            .takes_part_in_sync(source)
+            .then(|| view.hover_axis(bars, plot, data.preview));
         body::report_hover(&mut pointer, &response, plot, &view, &projection, time);
 
         pointer.clicked = response.clicked();
@@ -648,7 +679,19 @@ mod tests {
     }
 
     #[test]
-    fn only_alpaca_is_a_stock() {
+    fn stock_and_index_symbol_types_are_distinct() {
+        assert_eq!(
+            symbol_info("SAP.DE", DataSource::Yahoo, ChartType::Candles).currency,
+            "EUR"
+        );
+        assert_eq!(
+            symbol_info("^IXIC", DataSource::Yahoo, ChartType::Candles).kind,
+            "index"
+        );
+        assert_eq!(
+            symbol_info("AAPL", DataSource::Yahoo, ChartType::Candles).kind,
+            "stock"
+        );
         assert_eq!(
             symbol_info("AAPL", DataSource::Alpaca, ChartType::Candles).kind,
             "stock"

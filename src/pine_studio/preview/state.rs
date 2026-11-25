@@ -65,6 +65,7 @@ impl PreviewState {
             timeframe,
             candles: Vec::new(),
             candles_fingerprint: crate::host::pine::chart::candles_fingerprint(&[]),
+            session_policy: crate::model::market::yahoo_session::snapshot(),
             loading: false,
             error: None,
             inbox: None,
@@ -209,6 +210,7 @@ impl PreviewState {
         self.market.ticker.hash(&mut market);
         self.market.source.hash(&mut market);
         self.timeframe.label().hash(&mut market);
+        self.session_policy.hash(&mut market);
         RunIdentity {
             candles: self.candles_fingerprint,
             last_is_closed: crate::host::pine::chart::last_candle_is_closed(&self.candles, now_ms),
@@ -233,7 +235,9 @@ impl PreviewState {
         now_ms: i64,
         light: bool,
     ) -> Option<crate::pine_studio::debug::DebugFeed> {
-        if self.candles.is_empty() {
+        if self.candles.is_empty()
+            || self.session_policy != crate::model::market::yahoo_session::snapshot()
+        {
             return None;
         }
         Some(crate::pine_studio::debug::DebugFeed {

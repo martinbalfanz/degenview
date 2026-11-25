@@ -8,3 +8,5 @@ not licensed under the application's GPL-3.0-only terms.
 A new provider adds its mark here (one file named after the provider, `.svg` where the owner publishes one),
 an arm in `ui::kit::source_logo::source`, and a line in this list. The OKX, Kraken, Bybit, Gate.io and
 MEXC files redraw the owners' marks as vectors.
+
+The Yahoo provider uses an original Y monogram (`yahoo.svg`), not an official Yahoo logo.

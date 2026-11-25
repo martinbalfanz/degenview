@@ -122,6 +122,7 @@ fn run(
         let now = now_ms();
         let (streams, interval, active, renew) = {
             let mut guard = lock(engine);
+            guard.refresh_yahoo_extended(now);
             guard.expire_leases(now);
             (
                 DataSource::QUOTE_STREAMS.map(|source| (source, guard.stream_products(source))),

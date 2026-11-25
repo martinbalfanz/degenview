@@ -174,6 +174,12 @@ impl DegenViewApp {
         store: SharedStore,
         sync_factory: Option<Arc<dyn crate::sync::transport::TransportFactory>>,
     ) -> Self {
+        let yahoo_extended = store
+            .lock()
+            .ok()
+            .and_then(|store| store.setting(crate::model::market::yahoo_session::SETTINGS_KEY))
+            .unwrap_or(false);
+        crate::model::market::yahoo_session::initialize(yahoo_extended);
         let app_theme = store
             .lock()
             .ok()
@@ -422,6 +428,7 @@ impl eframe::App for DegenViewApp {
         self.sync_viewports(ctx);
         self.sync_settings_viewport(ctx);
         self.sync_alerts_viewport(ctx);
+        self.tabs.tick_yahoo_sessions(ctx);
         self.tick_alerts();
         // Runs once per frame (not in `ui`, which also fires for the root viewport).
         self.tick_pine();

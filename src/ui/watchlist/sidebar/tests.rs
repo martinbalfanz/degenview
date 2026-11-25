@@ -246,6 +246,7 @@ impl SelectorRig {
             lists: &self.lists,
             flags: &flags,
             quote: &quote,
+            extended_quote: &|_| None,
             trends: &HashMap::new(),
             focused_market: None,
             load_failed: false,
@@ -339,6 +340,7 @@ fn show_frame(
         lists,
         flags: &flags,
         quote: &quote,
+        extended_quote: &|_| None,
         trends: &HashMap::new(),
         focused_market: None,
         load_failed: false,
@@ -511,7 +513,7 @@ fn the_detail_card_is_on_by_default() {
 }
 
 /// Draws the detail card for a Binance market, with `quote`; returns the height it took.
-fn detail_card_height(quote: Option<WatchlistQuote>) -> f32 {
+fn detail_card_height(quote: Option<WatchlistQuote>, extended: Option<WatchlistQuote>) -> f32 {
     let mut list = Watchlist::new("L");
     let btc = item("BTCUSDT");
     let id = btc.id;
@@ -523,10 +525,12 @@ fn detail_card_height(quote: Option<WatchlistQuote>) -> f32 {
     };
     let flags = Flags::default();
     let lookup = |_: &InstrumentId| quote.clone();
+    let secondary = |_: &InstrumentId| extended.clone();
     let input = WatchlistSidebarInput {
         lists: &lists,
         flags: &flags,
         quote: &lookup,
+        extended_quote: &secondary,
         trends: &HashMap::new(),
         focused_market: None,
         load_failed: false,
@@ -551,10 +555,17 @@ fn detail_card_height(quote: Option<WatchlistQuote>) -> f32 {
 
 #[test]
 fn the_detail_card_is_as_tall_as_it_says_whatever_the_quote_holds() {
-    let plain = detail_card_height(None);
-    assert_eq!(plain, detail_height(None));
+    let plain = detail_card_height(None, None);
+    assert_eq!(plain, detail_height(None, false));
     let noted = WatchlistQuote::unsupported(Some("Delayed by the provider".to_owned()));
-    let with_note = detail_card_height(Some(noted.clone()));
-    assert_eq!(with_note, detail_height(Some(&noted)));
+    let with_note = detail_card_height(Some(noted.clone()), None);
+    assert_eq!(with_note, detail_height(Some(&noted), false));
     assert!(with_note > plain, "a note takes a band of its own");
+    let secondary = WatchlistQuote {
+        last: Some(147.35),
+        ..Default::default()
+    };
+    let with_secondary = detail_card_height(None, Some(secondary));
+    assert_eq!(with_secondary, detail_height(None, true));
+    assert!(with_secondary > plain);
 }

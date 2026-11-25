@@ -15,3 +15,7 @@ pub(in crate::model) mod source;
 pub(in crate::model) mod timeframe;
 pub mod trend;
 pub mod venue;
+
+pub mod yahoo_preview;
+
+pub mod yahoo_session;

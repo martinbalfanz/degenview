@@ -23,7 +23,7 @@ pub(super) fn indicators_page(ui: &mut Ui, c: &mut ChartSettingsContext) {
     let config = &mut *c.indicators;
     // Line sources report one price per timestamp and no turnover at all.
     if !source.is_line_chart() {
-        let hint = if source.provides_volume() {
+        let hint = if source.provides_market_volume(c.symbol) {
             tr!("Turnover per candle, drawn along the bottom of the chart.").to_owned()
         } else {
             tr!(
@@ -34,7 +34,11 @@ pub(super) fn indicators_page(ui: &mut Ui, c: &mut ChartSettingsContext) {
         card::card(ui, Icon::BarChart, tr!("Volume Bars"), Some(&hint), |ui| {
             // Left visible rather than hidden: a greyed-out switch with a reason reads better
             // than a setting that silently does nothing.
-            card::switch_enabled(ui, &mut config.show_volume, source.provides_volume());
+            card::switch_enabled(
+                ui,
+                &mut config.show_volume,
+                source.provides_market_volume(c.symbol),
+            );
         });
     }
     card::card(

@@ -9,6 +9,7 @@ mod tests;
 mod worker;
 
 use crate::model::Kline;
+use crate::model::market::yahoo_session::{self, PolicySnapshot};
 use crate::model::pine::instance::{PineInstance, StoredInput, VisualOrder};
 use crate::pine::compiler::program::{ChartTheme, SymbolInfo, VisualOutput};
 use crate::pine::logs::LogHistory;
@@ -175,12 +176,22 @@ pub struct ChartRuns {
     /// keeps running; only what it writes from now on is left out.
     logging_paused: HashSet<u64>,
     handed: Option<HandedBars>,
+    session_policy: Option<PolicySnapshot>,
 }
 
 impl ChartRuns {
     /// Stops every run; the next frame starts the visible instances afresh. Logging choices stay.
     pub fn stop_all(&mut self) {
         self.runs.clear();
+    }
+
+    /// Invalidate outputs before any reader sees them, even on a hidden or
+    /// temporarily empty chart.
+    pub(crate) fn sync_session(&mut self, policy: PolicySnapshot) {
+        if self.session_policy != Some(policy) {
+            self.stop_all();
+            self.session_policy = Some(policy);
+        }
     }
 
     /// Stops every run and forgets every instance's logging choice (the chart's scripts were
@@ -303,6 +314,19 @@ impl ChartRuns {
         chart: &ChartFrame<'_>,
         instances: &[PineInstance],
     ) -> Vec<(Arc<VisualOutput>, VisualOrder, u64)> {
+        self.update_with_policy(repaint, chart, instances, yahoo_session::snapshot())
+    }
+
+    fn update_with_policy(
+        &mut self,
+        repaint: &egui::Context,
+        chart: &ChartFrame<'_>,
+        instances: &[PineInstance],
+        policy: PolicySnapshot,
+    ) -> Vec<(Arc<VisualOutput>, VisualOrder, u64)> {
+        // Even a crypto script may request Yahoo data. Do not retain output
+        // or controller state computed under another session policy.
+        self.sync_session(policy);
         if instances.iter().all(|instance| !instance.visible) {
             self.runs.clear();
             self.handed = None;
@@ -335,7 +359,7 @@ impl ChartRuns {
                     && run.theme == chart.theme
             });
             if !configured {
-                self.start(repaint, chart, instance);
+                self.start(repaint, chart, instance, policy);
             }
             let Some(run) = self.runs.get_mut(&instance.id) else {
                 continue;
@@ -409,7 +433,13 @@ impl ChartRuns {
 
     /// Starts a new run of `instance`, in a new epoch, keeping the last valid output of the run it
     /// replaces on screen until the new one has its own.
-    fn start(&mut self, repaint: &egui::Context, chart: &ChartFrame<'_>, instance: &PineInstance) {
+    fn start(
+        &mut self,
+        repaint: &egui::Context,
+        chart: &ChartFrame<'_>,
+        instance: &PineInstance,
+        policy: PolicySnapshot,
+    ) {
         self.epochs += 1;
         let previous_valid = self
             .runs
@@ -427,6 +457,7 @@ impl ChartRuns {
                 symbol: chart.symbol.clone(),
                 bar_seconds: chart.bar_seconds,
                 timeframe_seconds: chart.timeframe_seconds,
+                session_policy: policy,
             },
             repaint.clone(),
         );

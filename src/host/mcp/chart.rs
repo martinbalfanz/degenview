@@ -173,6 +173,7 @@ pub fn source_slug(source: DataSource) -> &'static str {
         DataSource::CoinGecko => "coingecko",
         DataSource::DexScreener => "dexscreener",
         DataSource::Alpaca => "alpaca",
+        DataSource::Yahoo => "yahoo",
         DataSource::Polymarket => "polymarket",
         DataSource::Kalshi => "kalshi",
         DataSource::CoinMarketCap => "coinmarketcap",
@@ -550,7 +551,10 @@ pub fn session_statistics(
         instrument: data.instrument.key(),
         timeframe: workspace.timeframe().label(),
         bar_ms: workspace.timeframe().nominal_ms(),
-        hours: crate::model::session_stats::MarketHours::for_source(data.instrument.source),
+        hours: crate::model::session_stats::MarketHours::for_market(
+            data.instrument.source,
+            &data.instrument.symbol,
+        ),
     };
     crate::mcp::session_stats::session_stats(&meta, data.candles, query)
 }

@@ -220,6 +220,9 @@ impl SettingsHost {
             sync,
             trading_hub,
             editor_themes: &self.editor_themes,
+            yahoo_extended_hours: store
+                .setting(crate::model::market::yahoo_session::SETTINGS_KEY)
+                .unwrap_or(false),
             tab_title_style: self.tab_titles.style(),
             now_ms,
         };
@@ -252,6 +255,25 @@ impl SettingsHost {
                             error = error
                         )),
                     });
+                }
+                SettingsAction::SetYahooExtendedHours(enabled) => {
+                    self.state.yahoo_status = Some(
+                        match store.set_setting(
+                            crate::model::market::yahoo_session::SETTINGS_KEY,
+                            &enabled,
+                        ) {
+                            Ok(()) => {
+                                crate::model::market::yahoo_session::apply_saved(enabled);
+                                ctx.request_repaint_of(egui::ViewportId::ROOT);
+                                ctx.request_repaint();
+                                StatusMessage::ok(tr!("Yahoo preference saved."))
+                            }
+                            Err(error) => StatusMessage::error(tr!(
+                                "Could not save the settings: {error}",
+                                error = error
+                            )),
+                        },
+                    );
                 }
                 SettingsAction::SetTheme(theme) => {
                     let _ = store.set_setting(crate::ui::theme::THEME_KEY, &theme);

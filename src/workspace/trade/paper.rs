@@ -127,7 +127,7 @@ impl ChartWorkspace {
     }
 
     pub(in crate::workspace) fn supports_paper_trading(source: DataSource) -> bool {
-        source != DataSource::CoinMarketCap
+        !matches!(source, DataSource::CoinMarketCap | DataSource::Yahoo)
     }
 
     /// Runs what the chart overlay asked for and returns why any of it failed, for the panel to
@@ -331,6 +331,7 @@ mod tests {
     fn a_snapshot_that_is_stale_missing_or_unpriced_is_withheld() {
         for quote in [
             Some(snapshot(Some(200.0), Freshness::Stale)),
+            Some(snapshot(Some(200.0), Freshness::Delayed)),
             Some(snapshot(Some(200.0), Freshness::Unavailable)),
             Some(snapshot(None, Freshness::Live)),
             Some(snapshot(Some(0.0), Freshness::Live)),

@@ -306,6 +306,19 @@ fn instrument_from(token: &str) -> Result<WatchlistInstrument, String> {
             Ok(item(source, &symbol, &symbol, &symbol))
         }
         DataSource::Alpaca => stock(&rest),
+        DataSource::Yahoo => {
+            let symbol = rest.to_uppercase();
+            if !source.is_yahoo_index(&symbol)
+                && source.yahoo_market(&symbol).is_none()
+                && source.yahoo_derivative(&symbol).is_none()
+                && !symbol
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-')
+            {
+                return Err("Not a supported Yahoo stock or index ticker".to_owned());
+            }
+            Ok(item(source, &symbol, &symbol, &symbol))
+        }
         DataSource::CoinGecko => {
             let id = rest.to_lowercase();
             let name = id

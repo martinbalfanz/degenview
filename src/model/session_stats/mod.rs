@@ -361,13 +361,26 @@ pub enum MarketHours {
     Continuous,
     /// A US stock: the regular session in New York.
     UsStock,
+    /// Exchange-local core session, without extended or special hours.
+    International(crate::model::YahooMarket),
+    Derivative(crate::model::YahooDerivative),
 }
 
 impl MarketHours {
     pub fn for_source(source: super::DataSource) -> Self {
         match source {
-            super::DataSource::Alpaca => Self::UsStock,
+            super::DataSource::Alpaca | super::DataSource::Yahoo => Self::UsStock,
             _ => Self::Continuous,
+        }
+    }
+
+    pub fn for_market(source: super::DataSource, symbol: &str) -> Self {
+        if let Some(market) = source.yahoo_derivative(symbol) {
+            Self::Derivative(market)
+        } else if let Some(market) = source.yahoo_market(symbol) {
+            Self::International(market)
+        } else {
+            Self::for_source(source)
         }
     }
 
@@ -377,6 +390,13 @@ impl MarketHours {
         match self {
             Self::Continuous => "UTC days",
             Self::UsStock => "US regular hours",
+            Self::International(market) => market.name(),
+            Self::Derivative(crate::model::YahooDerivative::Forex { .. }) => {
+                "New York FX trading day"
+            }
+            Self::Derivative(crate::model::YahooDerivative::Future { .. }) => {
+                "CME Globex trading day"
+            }
         }
     }
 
@@ -385,6 +405,13 @@ impl MarketHours {
         match self {
             Self::Continuous => tr!("UTC days"),
             Self::UsStock => tr!("US regular hours"),
+            Self::International(market) => market.name(),
+            Self::Derivative(crate::model::YahooDerivative::Forex { .. }) => {
+                tr!("New York FX trading day")
+            }
+            Self::Derivative(crate::model::YahooDerivative::Future { .. }) => {
+                tr!("CME Globex trading day")
+            }
         }
     }
 }
@@ -580,7 +607,11 @@ fn usable(bar: &Kline) -> bool {
 
 /// Groups the usable bars into sessions. `bars` is oldest first, as the chart holds it.
 fn sessions(bars: &[Kline], bar_ms: i64, hours: MarketHours, intraday: bool) -> Vec<Day> {
-    let us = MarketSessions::for_kind("stock");
+    let market = match hours {
+        MarketHours::International(market) => MarketSessions::international(market),
+        MarketHours::Derivative(market) => MarketSessions::derivative(market),
+        _ => MarketSessions::for_kind("stock"),
+    };
     let mut days: Vec<Day> = Vec::new();
     for (index, bar) in bars.iter().enumerate() {
         if !usable(bar) {
@@ -590,13 +621,24 @@ fn sessions(bars: &[Kline], bar_ms: i64, hours: MarketHours, intraday: bool) -> 
             // A daily bar is its UTC date: Alpaca stamps it 04:00 or 05:00 UTC, crypto 00:00.
             let c = calendar::components(bar.open_time);
             (c.year, c.month, c.day)
-        } else if hours == MarketHours::UsStock {
+        } else if hours != MarketHours::Continuous {
             let last = bar.open_time + bar_ms - 1;
-            if !(us.is_regular(bar.open_time) || us.is_regular(last)) {
+            if !(market.is_regular(bar.open_time) || market.is_regular(last)) {
                 continue;
             }
-            let offset = crate::pine::time::zone_offset_secs(Some(us.zone()), bar.open_time);
-            let c = calendar::components(bar.open_time + offset * 1_000);
+            let date_ms = if let MarketHours::Derivative(derivative) = hours {
+                let instant = if market.is_regular(bar.open_time) {
+                    bar.open_time
+                } else {
+                    last
+                };
+                derivative.trading_day_ms(instant)
+            } else {
+                let offset =
+                    crate::pine::time::zone_offset_secs(Some(market.zone()), bar.open_time);
+                bar.open_time + offset * 1_000
+            };
+            let c = calendar::components(date_ms);
             (c.year, c.month, c.day)
         } else {
             let c = calendar::components(bar.open_time);
@@ -802,7 +844,7 @@ pub fn compute(
         .flatten();
 
     let mut notes = Vec::new();
-    if intraday && hours == MarketHours::UsStock {
+    if intraday && hours != MarketHours::Continuous {
         notes.push(Note::BoundaryOpen);
     }
     if estimate.n == 0 && outcome == Outcome::GapFill && hours == MarketHours::Continuous {

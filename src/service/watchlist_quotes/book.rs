@@ -15,6 +15,7 @@ pub struct WatchlistQuoteBook {
 struct Inner {
     quotes: RwLock<HashMap<String, WatchlistQuote>>,
     revision: AtomicU64,
+    extended: RwLock<HashMap<String, WatchlistQuote>>,
 }
 
 impl WatchlistQuoteBook {
@@ -24,6 +25,34 @@ impl WatchlistQuoteBook {
 
     pub fn get_by_key(&self, key: &str) -> Option<WatchlistQuote> {
         self.inner.quotes.read().ok()?.get(key).cloned()
+    }
+
+    /// Secondary pre/post observation, never the sortable regular price.
+    pub fn get_extended(&self, instrument: &InstrumentId) -> Option<WatchlistQuote> {
+        self.inner
+            .extended
+            .read()
+            .ok()?
+            .get(&instrument.key())
+            .cloned()
+    }
+
+    pub(super) fn replace_extended(&self, updates: HashMap<String, WatchlistQuote>) {
+        let Ok(mut quotes) = self.inner.extended.write() else {
+            return;
+        };
+        if *quotes != updates {
+            *quotes = updates;
+            self.inner.revision.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    pub(super) fn remove_extended(&self, key: &str) {
+        if let Ok(mut quotes) = self.inner.extended.write()
+            && quotes.remove(key).is_some()
+        {
+            self.inner.revision.fetch_add(1, Ordering::AcqRel);
+        }
     }
 
     /// Bumps whenever any quote changes, so a sorted list knows when to re-sort.
@@ -39,6 +68,7 @@ impl WatchlistQuoteBook {
         let before = quotes.len();
         for key in keys {
             quotes.remove(key);
+            self.remove_extended(key);
         }
         let changed = quotes.len() != before;
         if changed {

@@ -469,7 +469,7 @@ impl ChartWorkspace {
             .map_or(0, |elapsed| elapsed.as_millis() as i64);
         self.charts
             .iter()
-            .filter(|chart| chart.is_market())
+            .filter(|chart| chart.is_market() && chart.yahoo_session_is_current(self.timeframe))
             .map(|chart| {
                 let (bars, run) = crate::host::pine::subscription::ChartRun::feed(
                     chart.chart.construction(chart.source),

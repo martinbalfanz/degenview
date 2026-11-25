@@ -8,10 +8,156 @@ use crate::workspace::ChartWorkspace;
 use eframe::egui;
 use std::time::Instant;
 
+/// Separate leased consumer: a chart needs quotes even with the sidebar hidden.
+pub(in crate::workspace) fn yahoo_chart_quote_owner(workspace_id: u64) -> u64 {
+    (1 << 59) + workspace_id
+}
+
+pub(in crate::workspace) mod provisional;
+use provisional::Observation;
+
+fn indicative_yahoo_price(
+    quote: &crate::model::watchlist::quote::WatchlistQuote,
+    last: &Kline,
+    now: i64,
+    extended: bool,
+) -> Option<f64> {
+    use crate::model::market::yahoo_session::{Session, session_at};
+    use crate::model::watchlist::quote::Freshness;
+    let timestamp = quote.timestamp_ms?;
+    if quote.freshness != Freshness::Delayed
+        || timestamp < last.open_time
+        || timestamp > now.saturating_add(60_000)
+        || now.saturating_sub(timestamp) > 30 * 60_000
+        || session_at(timestamp).is_none()
+        || session_at(timestamp) != session_at(now)
+        || (!extended && session_at(now) != Some(Session::Regular))
+    {
+        return None;
+    }
+    quote.last.filter(|price| price.is_finite() && *price > 0.0)
+}
+
 impl ChartWorkspace {
     pub(in crate::workspace) fn update_live_feeds(&mut self, ctx: &egui::Context) {
         for source in DataSource::CANDLE_STREAMS {
             self.update_live_feed(source, ctx);
+        }
+        self.update_yahoo_chart_quotes();
+    }
+
+    fn update_yahoo_chart_quotes(&mut self) {
+        let active = !self.replay.is_engaged();
+        let demand: Vec<_> = self
+            .charts
+            .iter()
+            .filter(|chart| {
+                active && chart.is_market() && chart.source.yahoo_stream_symbol(&chart.symbol)
+            })
+            .map(|chart| InstrumentId::new(chart.source, &chart.symbol))
+            .collect();
+        self.quote_coordinator
+            .set_sidebar_demand(yahoo_chart_quote_owner(self.id), demand, active);
+
+        let now = crate::clock::now_ms();
+        for chart in &mut self.charts {
+            let levels =
+                if active && chart.is_market() && chart.source.yahoo_stream_symbol(&chart.symbol) {
+                    let instrument = InstrumentId::new(chart.source, &chart.symbol);
+                    crate::model::market::yahoo_preview::SessionLevels::from_quotes(
+                        self.quote_book.get(&instrument).as_ref(),
+                        self.quote_book.get_extended(&instrument).as_ref(),
+                        now,
+                        self.timeframe.is_intraday(),
+                    )
+                } else {
+                    Default::default()
+                };
+            chart.chart.set_yahoo_session_levels(levels);
+            let observation =
+                if active && chart.is_market() && chart.source.yahoo_stream_symbol(&chart.symbol) {
+                    chart.candles.last().and_then(|last| {
+                        let instrument = InstrumentId::new(chart.source, &chart.symbol);
+                        let extended = crate::model::market::yahoo_session::extended_candles(
+                            chart.source,
+                            &chart.symbol,
+                            self.timeframe,
+                        );
+                        let quote = if extended
+                            && matches!(
+                                crate::model::market::yahoo_session::session_at(now),
+                                Some(
+                                    crate::model::market::yahoo_session::Session::Pre
+                                        | crate::model::market::yahoo_session::Session::Post
+                                )
+                            ) {
+                            self.quote_book.get_extended(&instrument)?
+                        } else {
+                            self.quote_book.get(&instrument)?
+                        };
+                        let price = indicative_yahoo_price(&quote, last, now, extended)?;
+                        Some(Observation {
+                            price,
+                            timestamp_ms: quote.timestamp_ms?,
+                        })
+                    })
+                } else {
+                    None
+                };
+            // Preview only; never insert an observation into Chart::candles.
+            let native_hourly = crate::model::market::yahoo_session::native_hourly(
+                chart.source,
+                &chart.symbol,
+                self.timeframe,
+            );
+            let preview = chart.candles.last().and_then(|last| {
+                let native_bucket = if native_hourly {
+                    observation
+                        .filter(|quote| quote.timestamp_ms > last.close_time)
+                        .and_then(|quote| {
+                            crate::service::market::yahoo::current_hour_bucket(
+                                &chart.symbol,
+                                quote.timestamp_ms,
+                                now,
+                                crate::model::market::yahoo_session::extended_candles(
+                                    chart.source,
+                                    &chart.symbol,
+                                    self.timeframe,
+                                ),
+                            )
+                        })
+                } else {
+                    None
+                };
+                chart.yahoo_preview.observe_with_grid(
+                    self.timeframe,
+                    last,
+                    observation,
+                    native_hourly,
+                    native_bucket,
+                )
+            });
+            if !active {
+                chart.yahoo_preview.clear();
+            }
+            // Do not draw a stale same-bucket price marker after REST has
+            // superseded its preview. Other buckets can still show a quote.
+            let marker = observation.filter(|quote| {
+                preview.is_some()
+                    || chart.candles.last().is_some_and(|last| {
+                        !self.timeframe.is_intraday()
+                            || if native_hourly {
+                                !(last.open_time..=last.close_time).contains(&quote.timestamp_ms)
+                            } else {
+                                crate::model::market::bucket::bucket_start_ms(
+                                    self.timeframe,
+                                    quote.timestamp_ms,
+                                ) != last.open_time
+                            }
+                    })
+            });
+            chart.chart.set_yahoo_quote(marker.map(|quote| quote.price));
+            chart.chart.set_yahoo_preview(preview);
         }
     }
 
@@ -349,6 +495,7 @@ mod tests {
                 candles: vec![fetched],
                 bars: Vec::new(),
                 series: Vec::new(),
+                yahoo_request_started_ms: None,
             }))
             .unwrap();
         chart.inbox = Some(receiver);
@@ -412,6 +559,7 @@ mod tests {
                 }],
                 bars,
                 series: Vec::new(),
+                yahoo_request_started_ms: None,
             }))
             .unwrap();
         chart.inbox = Some(receiver);
@@ -423,5 +571,39 @@ mod tests {
             workspace.charts[0].candles[0].volume, 14.0,
             "three minutes of 2 and the socket's 8"
         );
+    }
+}
+
+#[cfg(test)]
+mod yahoo_chart_tests {
+    use super::*;
+    use crate::model::watchlist::quote::{Freshness, WatchlistQuote};
+    use crate::workspace::test_support::candle;
+
+    #[test]
+    fn indicative_price_requires_a_recent_regular_session_quote_and_never_changes_candle() {
+        let now = crate::pine::time::calendar::make(2026, 11, 25, 15, 0, 0, 0).unwrap();
+        let bar = candle(now - 60_000, 100.0);
+        let quote = WatchlistQuote {
+            last: Some(101.0),
+            timestamp_ms: Some(now - 1_000),
+            freshness: Freshness::Delayed,
+            ..WatchlistQuote::default()
+        };
+        assert_eq!(
+            indicative_yahoo_price(&quote, &bar, now, false),
+            Some(101.0)
+        );
+        assert_eq!(bar.close, 100.0);
+        assert!(
+            indicative_yahoo_price(&quote.with_freshness(Freshness::Stale), &bar, now, false)
+                .is_none()
+        );
+        let old = WatchlistQuote {
+            timestamp_ms: Some(now - 120_000),
+            ..quote.clone()
+        };
+        assert!(indicative_yahoo_price(&old, &bar, now, false).is_none());
+        assert!(indicative_yahoo_price(&quote, &bar, now + 31 * 60_000, false).is_none());
     }
 }

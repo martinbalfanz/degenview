@@ -5,6 +5,13 @@ use super::*;
 use crate::pine::time::bucket::seconds_of;
 
 impl ChartCard {
+    pub(crate) fn sync_pine_session(
+        &mut self,
+        policy: crate::model::market::yahoo_session::PolicySnapshot,
+    ) {
+        self.pine.sync_session(policy);
+    }
+
     pub fn pine_instances(&self) -> &[PineInstance] {
         &self.instances
     }

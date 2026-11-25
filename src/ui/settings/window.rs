@@ -26,7 +26,7 @@ pub const SIDEBAR_WIDTH: f32 = 224.0;
 /// The Settings window: the sidebar and a 616-point page.
 pub const WINDOW_SIZE: Vec2 = Vec2::new(840.0, 600.0);
 /// The smallest the window can be made: tall enough for every sidebar row.
-pub const MIN_SIZE: Vec2 = Vec2::new(520.0, 480.0);
+pub const MIN_SIZE: Vec2 = Vec2::new(520.0, 500.0);
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum SettingsSection {
@@ -34,6 +34,7 @@ pub enum SettingsSection {
     Appearance,
     PineStudio,
     Alpaca,
+    Yahoo,
     Brokers,
     CoinMarketCap,
     Ai,
@@ -48,10 +49,11 @@ pub enum SettingsSection {
 }
 
 impl SettingsSection {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Appearance,
         Self::PineStudio,
         Self::Alpaca,
+        Self::Yahoo,
         Self::Brokers,
         Self::CoinMarketCap,
         Self::Ai,
@@ -77,6 +79,7 @@ impl SettingsSection {
             Self::Appearance => tr!("Appearance"),
             Self::PineStudio => tr!("Pine Studio"),
             Self::Alpaca => "Alpaca",
+            Self::Yahoo => "Yahoo Finance",
             Self::Brokers => tr!("Brokers"),
             Self::CoinMarketCap => "CoinMarketCap",
             Self::Ai => tr!("AI Assistant"),
@@ -97,6 +100,7 @@ impl SettingsSection {
             Self::Appearance => Color32::from_rgb(94, 92, 230),
             Self::PineStudio => Color32::from_rgb(172, 142, 104),
             Self::Alpaca => Color32::from_rgb(255, 159, 10),
+            Self::Yahoo => Color32::from_rgb(115, 65, 210),
             Self::Brokers => Color32::from_rgb(255, 112, 67),
             Self::CoinMarketCap => Color32::from_rgb(10, 132, 255),
             Self::Ai => Color32::from_rgb(255, 214, 10),
@@ -117,6 +121,7 @@ impl SettingsSection {
             Self::Appearance => "appearance",
             Self::PineStudio => "pinestudio",
             Self::Alpaca => "alpaca",
+            Self::Yahoo => "yahoo",
             Self::Brokers => "brokers",
             Self::CoinMarketCap => "coinmarketcap",
             Self::Ai => "ai",
@@ -139,6 +144,8 @@ pub enum SettingsAction {
     Storage(StorageAction),
     /// A theme tile on the Appearance page was picked.
     SetTheme(crate::ui::theme::AppTheme),
+    /// Yahoo session preference, effective after restart.
+    SetYahooExtendedHours(bool),
     /// A tab title style on the Appearance page was picked (or restored to the default).
     SetTabTitleStyle(crate::model::tab::title::TabTitleStyle),
     /// A language on the Appearance page was picked.
@@ -176,6 +183,7 @@ pub struct SettingsInput<'a> {
     pub sync: &'a crate::host::sync::SyncHost,
     pub trading_hub: &'a std::sync::Arc<crate::host::trading::TradingHub>,
     pub editor_themes: &'a crate::host::editor_theme::EditorThemeHost,
+    pub yahoo_extended_hours: bool,
     pub tab_title_style: crate::model::tab::title::TabTitleStyle,
     pub now_ms: i64,
 }
@@ -185,6 +193,7 @@ pub struct SettingsState {
     pub section: SettingsSection,
     pub webhooks: WebhookSettingsState,
     pub api_keys: ApiKeysState,
+    pub yahoo_status: Option<crate::ui::settings::card::StatusMessage>,
     pub brokers: crate::ui::settings::brokers::BrokersState,
     pub ai: crate::ui::settings::ai::AiSettingsState,
     pub network: crate::ui::settings::network::NetworkState,
@@ -340,6 +349,7 @@ impl SettingsSection {
             Self::Appearance => Icon::Paintbrush,
             Self::PineStudio => Icon::AngleBrackets,
             Self::Alpaca => Icon::ChartLine,
+            Self::Yahoo => Icon::ChartLine,
             Self::Brokers => Icon::ArrowLeftRight,
             Self::CoinMarketCap => Icon::Gauge,
             Self::Ai => Icon::Sparkles,
@@ -455,6 +465,27 @@ pub fn show(
                 section,
                 tr!("Connect Alpaca to chart US stocks and ETFs in DegenView."),
                 |ui| api_keys::alpaca_body(ui, &mut state.api_keys, store),
+            );
+        }
+        SettingsSection::Yahoo => {
+            page_shell(
+                &mut page,
+                section,
+                tr!(
+                    "Chart stocks, ETFs, indexes, currencies and futures without an API key. Prices may be delayed."
+                ),
+                |ui| {
+                    use crate::model::market::yahoo_session;
+                    section_yahoo(
+                        ui,
+                        input.yahoo_extended_hours,
+                        state.yahoo_status.as_ref(),
+                        &mut actions,
+                    );
+                    if yahoo_session::overridden_by_environment() {
+                        ui.label(tr!("The startup environment variable overrides the saved session preference."));
+                    }
+                },
             );
         }
         SettingsSection::Brokers => {
@@ -776,6 +807,50 @@ impl NotificationSwitch {
             Self::MacosNotifications => Icon::MacWindow,
         }
     }
+}
+
+fn section_yahoo(
+    ui: &mut egui::Ui,
+    saved: bool,
+    status: Option<&crate::ui::settings::card::StatusMessage>,
+    actions: &mut Vec<SettingsAction>,
+) {
+    use crate::model::market::yahoo_session;
+    section(ui, tr!("Trading sessions"), None, |ui| {
+        let mut enabled = saved;
+        card::card(
+            ui,
+            Icon::ChartLine,
+            tr!("Extended hours"),
+            Some(tr!(
+                "Include US stock and ETF premarket and after-hours data on intraday charts. Changes apply without restarting."
+            )),
+            |ui| {
+                if card::switch(ui, &mut enabled) {
+                    actions.push(SettingsAction::SetYahooExtendedHours(enabled));
+                }
+            },
+        );
+        ui.add_space(8.0);
+        ui.label(kit::text(
+            if yahoo_session::extended_enabled() {
+                tr!("Current session: regular and extended hours")
+            } else {
+                tr!("Current session: regular hours")
+            },
+            kit::size::BODY,
+            kit::REGULAR,
+            theme::text_secondary(),
+        ));
+        if let Some(status) = status {
+            status_message(ui, &status.text(), status.is_error);
+        }
+    });
+    section(ui, tr!("Data availability"), None, |ui| {
+        card(ui, |ui| {
+            ui.label(kit::text(tr!("No API key required. Yahoo data is indicative and may be delayed. Daily and longer candles remain regular-session bars."), kit::size::BODY, kit::REGULAR, theme::text_secondary()));
+        });
+    });
 }
 
 fn notifications_page(ui: &mut egui::Ui, input: &SettingsInput, actions: &mut Vec<SettingsAction>) {

@@ -68,6 +68,7 @@ impl PreviewMarket {
                 | DataSource::CoinGecko
                 | DataSource::DexScreener
                 | DataSource::Alpaca
+                | DataSource::Yahoo
         )
     }
 
@@ -136,6 +137,7 @@ pub struct PreviewState {
     candles: Vec<Kline>,
     /// `candles_fingerprint(&candles)`, made when the candles are replaced and not every frame.
     candles_fingerprint: u64,
+    session_policy: crate::model::market::yahoo_session::PolicySnapshot,
     loading: bool,
     error: Option<ProviderError>,
     inbox: Option<Pending<Result<Vec<Kline>, ProviderError>>>,

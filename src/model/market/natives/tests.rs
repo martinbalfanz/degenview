@@ -11,7 +11,7 @@ const TABLE: [&str; 24] = [
     "3D", "5D", "1W", "2W", "1M", "2M", "3M", "6M", "1Y",
 ];
 
-const CANDLE_SOURCES: [DataSource; 9] = [
+const CANDLE_SOURCES: [DataSource; 10] = [
     DataSource::Binance,
     DataSource::Coinbase,
     DataSource::Okx,
@@ -20,6 +20,7 @@ const CANDLE_SOURCES: [DataSource; 9] = [
     DataSource::Gate,
     DataSource::Mexc,
     DataSource::Alpaca,
+    DataSource::Yahoo,
     DataSource::DexScreener,
 ];
 
@@ -364,4 +365,35 @@ fn only_binance_okx_and_gate_serve_seconds_and_gate_only_those_of_ten() {
         assert!(!source.serves(tf("30s")), "{source:?}");
     }
     assert!(DataSource::Polymarket.serves(tf("1m")));
+}
+
+#[test]
+fn yahoo_uses_regular_session_minute_bars_and_daily_calendar_folds() {
+    assert_eq!(DataSource::Yahoo.plan(tf("1h")).unwrap().base(), tf("15m"));
+    assert_eq!(
+        DataSource::Yahoo.plan(tf("1W")).unwrap().base(),
+        Timeframe::DAY_1
+    );
+    assert_eq!(
+        DataSource::Yahoo.plan(tf("1M")).unwrap().base(),
+        Timeframe::DAY_1
+    );
+    assert!(!DataSource::Yahoo.serves(tf("30s")));
+}
+
+#[test]
+fn yahoo_instrument_plan_uses_native_hour_only_for_exact_us_hourly_series() {
+    let source = DataSource::Yahoo;
+    let hour = tf("1h");
+    assert!(source.plan_for("NVDA", hour).unwrap().is_native());
+    assert!(source.plan_for("SPY", hour).unwrap().is_native());
+    for symbol in ["SAP.DE", "^GSPC", "ES=F", "EURUSD=X"] {
+        assert_eq!(source.plan_for(symbol, hour).unwrap().base(), tf("15m"));
+    }
+    for timeframe in [tf("2h"), tf("4h"), tf("1D"), tf("1W")] {
+        assert_eq!(
+            source.plan_for("NVDA", timeframe).unwrap().base(),
+            source.plan(timeframe).unwrap().base()
+        );
+    }
 }

@@ -4,6 +4,81 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
+msgid "A day is the core session on {exchange}."
+msgstr ""
+
+msgid "Alpaca needs an API key"
+msgstr ""
+
+msgid "Alpaca stocks could not be searched"
+msgstr ""
+
+msgid "An evening session belongs to the following trading date."
+msgstr ""
+
+msgid "CME Globex trading day"
+msgstr ""
+
+msgid "Chart stocks, ETFs, indexes, currencies and futures without an API key. Prices may be delayed."
+msgstr ""
+
+msgid "Current session: regular and extended hours"
+msgstr ""
+
+msgid "Current session: regular hours"
+msgstr ""
+
+msgid "Data availability"
+msgstr ""
+
+msgid "Extended hours"
+msgstr ""
+
+msgid "Forex"
+msgstr ""
+
+msgid "Futures"
+msgstr ""
+
+msgid "Include US stock and ETF premarket and after-hours data on intraday charts. Changes apply without restarting."
+msgstr ""
+
+msgid "May be delayed"
+msgstr ""
+
+msgid "New York FX trading day"
+msgstr ""
+
+msgid "No API key required. Yahoo data is indicative and may be delayed. Daily and longer candles remain regular-session bars."
+msgstr ""
+
+msgid "Popular US stocks and ETFs"
+msgstr ""
+
+msgid "Prices may be delayed"
+msgstr ""
+
+msgid "Set up Alpaca to open an Alpaca chart"
+msgstr ""
+
+msgid "The startup environment variable overrides the saved session preference."
+msgstr ""
+
+msgid "Trading session changed. Start debugging again to use the new data."
+msgstr ""
+
+msgid "Trading sessions"
+msgstr ""
+
+msgid "Traditional markets"
+msgstr ""
+
+msgid "Yahoo preference saved."
+msgstr ""
+
+msgid "Yahoo prices may be delayed; paper trading is unavailable."
+msgstr ""
+
 #: src/model/editor_theme/codec/mod.rs
 msgid "\"fontFamily\" is not a usable font name."
 msgstr ""
@@ -814,10 +889,6 @@ msgstr ""
 
 #: src/service/watchlist_quotes/provider.rs
 msgid "Add your Alpaca API key in Settings to see stock quotes"
-msgstr ""
-
-#: src/pine_studio/preview/market_picker.rs
-msgid "Add your Alpaca API keys in Settings."
 msgstr ""
 
 #: src/ui/chart/symbol_picker/mod.rs
@@ -11069,10 +11140,6 @@ msgstr ""
 msgid "Popular"
 msgstr ""
 
-#: src/ui/portfolio/asset_picker.rs
-msgid "Popular US stocks and ETFs · free IEX feed"
-msgstr ""
-
 #: src/ui/chart/symbol_picker/mod.rs
 #: src/ui/portfolio/asset_picker.rs
 msgid "Popular topics"
@@ -13519,10 +13586,6 @@ msgstr ""
 msgid "Set up"
 msgstr ""
 
-#: src/ui/chart/symbol_picker/mod.rs
-msgid "Set up Alpaca to open a stock"
-msgstr ""
-
 #: src/app/window.rs
 #: src/ui/chart/card/overlay_card.rs
 #: src/ui/drawing/layer/menu.rs
@@ -14254,18 +14317,6 @@ msgstr ""
 #: src/ui/chart/symbol_picker/search.rs
 #: src/ui/portfolio/asset_picker.rs
 msgid "Stocks"
-msgstr ""
-
-#: src/ui/chart/symbol_picker/mod.rs
-msgid "Stocks could not be searched"
-msgstr ""
-
-#: src/pine_studio/preview/market_picker.rs
-msgid "Stocks need Alpaca market data"
-msgstr ""
-
-#: src/ui/chart/symbol_picker/mod.rs
-msgid "Stocks need an Alpaca key"
 msgstr ""
 
 #: src/pine_studio/ai/panel.rs
@@ -20624,4 +20675,10 @@ msgstr ""
 #: src/ui/window/tab_link_menu/mod.rs
 msgctxt "what a link syncs, in a list"
 msgid "time"
+msgstr ""
+
+msgid "Premarket"
+msgstr ""
+
+msgid "After hours"
 msgstr ""

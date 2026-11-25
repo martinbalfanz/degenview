@@ -14,6 +14,44 @@ use eframe::egui;
 use std::time::Instant;
 
 impl PreviewState {
+    /// A foreign security request can depend on Yahoo on any preview market.
+    /// Only discard primary candles when their own effective mode changed.
+    pub(in crate::pine_studio) fn sync_session(
+        &mut self,
+        policy: crate::model::market::yahoo_session::PolicySnapshot,
+    ) -> bool {
+        if self.session_policy == policy {
+            return false;
+        }
+        let current = policy.effective(self.market.source, &self.market.ticker, self.timeframe);
+        let previous =
+            self.session_policy
+                .effective(self.market.source, &self.market.ticker, self.timeframe);
+        if current != previous {
+            self.inbox = None;
+            self.fetched_for = None;
+            self.last_fetch = None;
+            self.loading = false;
+            self.error = None;
+            self.set_candles(Vec::new());
+            if let Some(candles) = service::cache::peek_yahoo_session(
+                &self.market.ticker,
+                self.timeframe,
+                CANDLE_LIMIT,
+                current.extended,
+            ) {
+                self.set_candles(candles);
+            }
+        }
+        self.session_policy = policy;
+        self.card.sync_pine_session(policy);
+        self.cancel_bar_pick();
+        self.cancel_range_pick();
+        self.picked_bar = None;
+        self.picked_range = None;
+        true
+    }
+
     pub(super) fn want_fetch(&self) -> bool {
         let key = (self.market.clone(), self.timeframe);
         self.fetched_for.as_ref() != Some(&key) && self.inbox.is_none()
@@ -27,8 +65,18 @@ impl PreviewState {
         }
         let market = self.market.clone();
         let timeframe = self.timeframe;
+        let extended = self
+            .session_policy
+            .effective(market.source, &market.ticker, timeframe)
+            .extended;
         self.inbox = Some(work_queue::start_for(market.source, Some(ctx), move || {
-            service::fetch_klines(market.source, &market.ticker, timeframe, CANDLE_LIMIT)
+            service::fetch_klines_with_session(
+                market.source,
+                &market.ticker,
+                timeframe,
+                CANDLE_LIMIT,
+                extended,
+            )
         }));
         self.loading = true;
         self.last_fetch = Some(Instant::now());
@@ -59,6 +107,8 @@ impl PreviewState {
 
     pub(super) fn select_market(&mut self, market: PreviewMarket) {
         if market != self.market {
+            self.inbox = None;
+            self.loading = false;
             self.set_candles(Vec::new());
             self.show_newest_bars();
             self.market = market.clone();
@@ -74,6 +124,8 @@ impl PreviewState {
 
     pub(in crate::pine_studio) fn select_timeframe(&mut self, timeframe: Timeframe) {
         if timeframe != self.timeframe {
+            self.inbox = None;
+            self.loading = false;
             self.timeframe = timeframe;
             self.set_candles(Vec::new());
             self.show_newest_bars();

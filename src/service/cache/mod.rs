@@ -10,6 +10,7 @@ pub mod control;
 pub mod disk;
 pub mod lookup;
 
+use crate::model::market::history::historical_prices_revised;
 use crate::model::{DataSource, Kline, Timeframe};
 use crate::service::ProviderError;
 use std::collections::HashMap;
@@ -39,6 +40,7 @@ pub struct Policy {
 pub fn policy(source: DataSource, timeframe: Timeframe) -> Option<Policy> {
     let fresh = match source {
         DataSource::CoinGecko => 120,
+        DataSource::Yahoo => 30,
         DataSource::DexScreener => 30,
         DataSource::Coinbase | DataSource::Okx | DataSource::Alpaca => 0,
         DataSource::Binance | DataSource::Bybit | DataSource::Gate | DataSource::Mexc
@@ -55,6 +57,7 @@ pub fn policy(source: DataSource, timeframe: Timeframe) -> Option<Policy> {
 
 struct Entry {
     fetched: Instant,
+    request_started_ms: i64,
     /// The `limit` the series was fetched for: a request for more cannot be answered from it.
     requested: u32,
     candles: Vec<Kline>,
@@ -71,8 +74,43 @@ fn held() -> &'static Mutex<Held> {
     HELD.get_or_init(Mutex::default)
 }
 
-fn key(source: DataSource, symbol: &str, timeframe: Timeframe) -> String {
-    format!("{source:?}:{}:{timeframe}", symbol.to_lowercase())
+fn key(source: DataSource, symbol: &str, timeframe: Timeframe, extended: bool) -> String {
+    let mode = if extended { ":extended" } else { "" };
+    let grid = if crate::model::market::yahoo_session::native_hourly(source, symbol, timeframe) {
+        ":native-hourly"
+    } else {
+        ""
+    };
+    format!(
+        "{source:?}:{}:{timeframe}{grid}{mode}",
+        symbol.to_lowercase()
+    )
+}
+
+/// Read already-fresh Yahoo intraday history without waiting for a provider or
+/// a cache lock. A missing, stale or undersized series follows the normal worker
+/// path; in particular, never serve the other session as a fallback.
+pub(crate) fn peek_yahoo_session(
+    symbol: &str,
+    timeframe: Timeframe,
+    limit: u32,
+    extended: bool,
+) -> Option<Vec<Kline>> {
+    let source = DataSource::Yahoo;
+    if !source.yahoo_stream_symbol(symbol) || !timeframe.is_intraday() {
+        return None;
+    }
+    let fresh = policy(source, timeframe)?.fresh;
+    let held = held().try_lock().ok()?;
+    let entry = held
+        .entries
+        .get(&key(source, symbol, timeframe, extended))?;
+    fresh_entry(entry, limit, fresh)
+}
+
+fn fresh_entry(entry: &Entry, limit: u32, fresh: Duration) -> Option<Vec<Kline>> {
+    (entry.requested >= limit && entry.fetched.elapsed() < fresh && !entry.candles.is_empty())
+        .then(|| newest(&entry.candles, limit))
 }
 
 /// The newest `limit` candles of `candles`.
@@ -116,9 +154,25 @@ pub fn fetch(
     timeframe: Timeframe,
     limit: u32,
     policy: Policy,
+    extended: bool,
     fetch: impl Fn(u32) -> Result<Vec<Kline>, ProviderError>,
 ) -> Result<Vec<Kline>, ProviderError> {
-    let key = key(source, symbol, timeframe);
+    fetch_observed(source, symbol, timeframe, limit, policy, extended, fetch)
+        .map(|(candles, _)| candles)
+}
+
+/// Carry the originating provider request time with the exact returned series.
+/// A cache hit retains that time; it must never advance a reconciliation floor.
+pub(super) fn fetch_observed(
+    source: DataSource,
+    symbol: &str,
+    timeframe: Timeframe,
+    limit: u32,
+    policy: Policy,
+    extended: bool,
+    fetch: impl Fn(u32) -> Result<Vec<Kline>, ProviderError>,
+) -> Result<(Vec<Kline>, i64), ProviderError> {
+    let key = key(source, symbol, timeframe, extended);
     let flight = {
         let mut held = held()
             .lock()
@@ -144,20 +198,29 @@ pub fn fetch(
             .map(|entry| {
                 (
                     entry.fetched.elapsed(),
+                    entry.request_started_ms,
                     entry.requested,
                     entry.candles.clone(),
                 )
             })
     };
-    if let Some((age, requested, candles)) = current {
+    if let Some((age, requested_at, requested, candles)) = current {
         if age < policy.fresh {
-            return Ok(newest(&candles, limit));
+            return Ok((newest(&candles, limit), requested_at));
         }
         if age < MAX_PATCH_AGE {
+            let requested_at = crate::clock::now_ms();
             match fetch(TAIL_LIMIT) {
                 Ok(tail) => {
-                    if let Some(merged) = patched(&candles, &tail) {
-                        return Ok(store(&key, requested, merged, limit));
+                    // Yahoo's historical OHLC can be revised after corporate
+                    // actions. Do not splice a newly adjusted tail onto old prices.
+                    let revised =
+                        source == DataSource::Yahoo && historical_prices_revised(&candles, &tail);
+                    if !revised && let Some(merged) = patched(&candles, &tail) {
+                        return Ok((
+                            store(&key, requested, merged, limit, requested_at),
+                            requested_at,
+                        ));
                     }
                 }
                 // Asking again whole would only spend the limit that was just refused.
@@ -168,12 +231,22 @@ pub fn fetch(
             }
         }
     }
+    let requested_at = crate::clock::now_ms();
     let candles = fetch(limit)?;
-    Ok(store(&key, limit, candles, limit))
+    Ok((
+        store(&key, limit, candles, limit, requested_at),
+        requested_at,
+    ))
 }
 
 /// Keeps `candles` and returns the newest `limit` of them.
-fn store(key: &str, requested: u32, mut candles: Vec<Kline>, limit: u32) -> Vec<Kline> {
+fn store(
+    key: &str,
+    requested: u32,
+    mut candles: Vec<Kline>,
+    limit: u32,
+    request_started_ms: i64,
+) -> Vec<Kline> {
     // A series stays as long as it was asked for, however many buckets arrived since.
     if candles.len() > requested as usize {
         candles.drain(..candles.len() - requested as usize);
@@ -194,6 +267,7 @@ fn store(key: &str, requested: u32, mut candles: Vec<Kline>, limit: u32) -> Vec<
             key.to_owned(),
             Entry {
                 fetched: Instant::now(),
+                request_started_ms,
                 requested,
                 candles,
             },
@@ -281,19 +355,129 @@ mod tests {
             })
         };
         let source = DataSource::Coinbase;
-        let first = fetch(source, "patch-test", Timeframe::HOUR_1, 10, LONG, provider).unwrap();
+        let first = fetch(
+            source,
+            "patch-test",
+            Timeframe::HOUR_1,
+            10,
+            LONG,
+            false,
+            provider,
+        )
+        .unwrap();
         assert_eq!(first.len(), 10);
         // Served from memory.
-        fetch(source, "patch-test", Timeframe::HOUR_1, 10, LONG, provider).unwrap();
+        fetch(
+            source,
+            "patch-test",
+            Timeframe::HOUR_1,
+            10,
+            LONG,
+            false,
+            provider,
+        )
+        .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         // No longer fresh: only the tail is asked for, and the series keeps its length.
-        let patched = fetch(source, "patch-test", Timeframe::HOUR_1, 10, STALE, provider).unwrap();
+        let patched = fetch(
+            source,
+            "patch-test",
+            Timeframe::HOUR_1,
+            10,
+            STALE,
+            false,
+            provider,
+        )
+        .unwrap();
         assert_eq!(*asked.lock().unwrap(), [10, TAIL_LIMIT]);
         assert_eq!(patched.len(), 10);
         assert_eq!(patched.last().unwrap().open_time, 110);
         // More than was held needs a whole fetch.
-        fetch(source, "patch-test", Timeframe::HOUR_1, 50, LONG, provider).unwrap();
+        fetch(
+            source,
+            "patch-test",
+            Timeframe::HOUR_1,
+            50,
+            LONG,
+            false,
+            provider,
+        )
+        .unwrap();
         assert_eq!(*asked.lock().unwrap(), [10, TAIL_LIMIT, 50]);
+    }
+
+    #[test]
+    fn yahoo_historical_price_revision_requires_a_whole_fetch() {
+        let asked = Mutex::new(Vec::new());
+        let provider = |limit: u32| {
+            asked.lock().unwrap().push(limit);
+            if limit == TAIL_LIMIT {
+                let mut tail = series(6..10);
+                tail[0].close = 99.0;
+                Ok(tail)
+            } else {
+                Ok(series(0..10))
+            }
+        };
+        let source = DataSource::Yahoo;
+        fetch(
+            source,
+            "revision-test",
+            Timeframe::DAY_1,
+            10,
+            STALE,
+            false,
+            provider,
+        )
+        .unwrap();
+        fetch(
+            source,
+            "revision-test",
+            Timeframe::DAY_1,
+            10,
+            STALE,
+            false,
+            provider,
+        )
+        .unwrap();
+        assert_eq!(*asked.lock().unwrap(), [10, TAIL_LIMIT, 10]);
+    }
+
+    #[test]
+    fn yahoo_native_hourly_completed_boundary_revision_requires_whole_fetch() {
+        let asked = Mutex::new(Vec::new());
+        let provider = |limit: u32| {
+            asked.lock().unwrap().push(limit);
+            if limit == TAIL_LIMIT {
+                let mut tail = series(6..10);
+                tail[0].close_time -= 1;
+                Ok(tail)
+            } else {
+                Ok(series(0..10))
+            }
+        };
+        let source = DataSource::Yahoo;
+        fetch(
+            source,
+            "HOURBOUNDARY",
+            Timeframe::HOUR_1,
+            10,
+            STALE,
+            false,
+            provider,
+        )
+        .unwrap();
+        fetch(
+            source,
+            "HOURBOUNDARY",
+            Timeframe::HOUR_1,
+            10,
+            STALE,
+            false,
+            provider,
+        )
+        .unwrap();
+        assert_eq!(*asked.lock().unwrap(), [10, TAIL_LIMIT, 10]);
     }
 
     #[test]
@@ -313,6 +497,7 @@ mod tests {
             Timeframe::DAY_1,
             10,
             STALE,
+            false,
             provider,
         )
         .unwrap();
@@ -322,6 +507,7 @@ mod tests {
             Timeframe::DAY_1,
             10,
             STALE,
+            false,
             provider,
         )
         .unwrap();
@@ -345,6 +531,7 @@ mod tests {
             Timeframe::HOUR_1,
             10,
             STALE,
+            false,
             provider,
         )
         .unwrap();
@@ -354,6 +541,7 @@ mod tests {
             Timeframe::HOUR_1,
             10,
             STALE,
+            false,
             provider,
         );
         assert_eq!(refreshed.unwrap().len(), 10);
@@ -377,6 +565,7 @@ mod tests {
             Timeframe::HOUR_1,
             10,
             STALE,
+            false,
             provider,
         )
         .unwrap();
@@ -386,6 +575,7 @@ mod tests {
             Timeframe::HOUR_1,
             10,
             STALE,
+            false,
             provider,
         );
         assert!(refreshed.unwrap_err().is_rate_limited());
@@ -401,6 +591,7 @@ mod tests {
             Timeframe::HOUR_1,
             10,
             STALE,
+            false,
             ok,
         )
         .unwrap();
@@ -412,6 +603,7 @@ mod tests {
                 Timeframe::HOUR_1,
                 10,
                 STALE,
+                false,
                 broken
             )
             .is_err()
@@ -431,6 +623,7 @@ mod tests {
                         Timeframe::HOUR_1,
                         10,
                         LONG,
+                        false,
                         |_| {
                             calls.fetch_add(1, Ordering::SeqCst);
                             std::thread::sleep(Duration::from_millis(60));
@@ -461,6 +654,7 @@ mod tests {
             Timeframe::DAY_1,
             10,
             LONG,
+            false,
             provider,
         )
         .unwrap();
@@ -472,6 +666,7 @@ mod tests {
             Timeframe::DAY_1,
             10,
             LONG,
+            false,
             provider,
         )
         .unwrap();
@@ -498,8 +693,100 @@ mod tests {
     }
 
     #[test]
+    fn yahoo_session_modes_have_independent_cached_series() {
+        let source = DataSource::Yahoo;
+        let symbol = "session-isolation-test";
+        let timeframe = Timeframe::MINUTE_1;
+        let regular = fetch(source, symbol, timeframe, 2, LONG, false, |_| {
+            Ok(series(1..3))
+        })
+        .unwrap();
+        let extended = fetch(source, symbol, timeframe, 2, LONG, true, |_| {
+            Ok(series(3..5))
+        })
+        .unwrap();
+        assert_ne!(regular, extended);
+        let cached = fetch(source, symbol, timeframe, 2, LONG, false, |_| {
+            panic!("regular history should still be cached")
+        })
+        .unwrap();
+        assert_eq!(regular, cached);
+    }
+
+    #[test]
+    fn yahoo_native_hourly_cache_identity_is_distinct() {
+        let regular = key(DataSource::Yahoo, "NVDA", Timeframe::HOUR_1, false);
+        let extended = key(DataSource::Yahoo, "NVDA", Timeframe::HOUR_1, true);
+        assert!(regular.ends_with(":native-hourly"));
+        assert!(extended.ends_with(":native-hourly:extended"));
+        assert_ne!(regular, extended);
+        assert!(
+            !key(DataSource::Yahoo, "SAP.DE", Timeframe::HOUR_1, false).contains("native-hourly")
+        );
+    }
+
+    #[test]
+    fn yahoo_cached_series_keeps_original_request_timestamp() {
+        let source = DataSource::Yahoo;
+        let symbol = "WATERMARK";
+        let timeframe = Timeframe::HOUR_1;
+        let key = key(source, symbol, timeframe, false);
+        store(&key, 2, series(0..2), 2, 12345);
+        let (bars, started) = fetch_observed(source, symbol, timeframe, 2, LONG, false, |_| {
+            panic!("fresh cache should not call provider")
+        })
+        .unwrap();
+        assert_eq!(bars, series(0..2));
+        assert_eq!(started, 12345);
+        forget_where(|candidate| candidate == key);
+    }
+
+    #[test]
+    fn yahoo_warm_session_cache_requires_fresh_and_sufficient_history() {
+        let entry = Entry {
+            fetched: Instant::now(),
+            request_started_ms: 0,
+            requested: 10,
+            candles: series(0..10),
+        };
+        assert_eq!(fresh_entry(&entry, 2, LONG.fresh).unwrap(), series(8..10));
+        assert!(fresh_entry(&entry, 11, LONG.fresh).is_none());
+        assert!(fresh_entry(&entry, 2, Duration::ZERO).is_none());
+    }
+
+    #[test]
+    fn yahoo_warm_session_cache_never_falls_back_to_other_mode() {
+        let source = DataSource::Yahoo;
+        let symbol = "WARMSESSION";
+        let timeframe = Timeframe::HOUR_1;
+        // Hold the table for setup, then use the same nonblocking path as a UI frame.
+        let regular = series(1..3);
+        let extended = series(3..5);
+        let regular_key = key(source, symbol, timeframe, false);
+        let extended_key = key(source, symbol, timeframe, true);
+        store(&regular_key, 2, regular.clone(), 2, 123);
+        store(&extended_key, 2, extended.clone(), 2, 456);
+        // Another test may briefly hold the global table; retry only in the test.
+        let peek = |mode| {
+            (0..1000).find_map(|_| {
+                let result = peek_yahoo_session(symbol, timeframe, 2, mode);
+                if result.is_none() {
+                    std::thread::yield_now();
+                }
+                result
+            })
+        };
+        assert_eq!(peek(false), Some(regular));
+        assert_eq!(peek(true), Some(extended));
+        forget_where(|key| key == extended_key);
+        assert!(peek_yahoo_session(symbol, timeframe, 2, true).is_none());
+        assert_eq!(peek(false), Some(series(1..3)));
+        forget_where(|key| key == regular_key);
+    }
+
+    #[test]
     fn a_series_is_held_per_timeframe() {
-        let key_of = |timeframe| key(DataSource::Coinbase, "BTC-USD", timeframe);
+        let key_of = |timeframe| key(DataSource::Coinbase, "BTC-USD", timeframe, false);
         assert_eq!(key_of(Timeframe::DAY_1), key_of(Timeframe::DAY_1));
         assert_ne!(key_of(Timeframe::DAY_1), key_of(Timeframe::HOUR_1));
         // Lengths of one duration are two series: a calendar day is not 24 hours.

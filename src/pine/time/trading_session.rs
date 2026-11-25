@@ -105,9 +105,50 @@ pub struct MarketSessions {
     regular: TradingSession,
     premarket: Option<TradingSession>,
     postmarket: Option<TradingSession>,
+    derivative: Option<crate::model::YahooDerivative>,
 }
 
 impl MarketSessions {
+    /// Session selection for a source-qualified symbol. This keeps Pine's
+    /// public syminfo.type ("stock" or "index") distinct from its market hours.
+    pub fn for_symbol(kind: &str, ticker_id: &str) -> Self {
+        if let Some((prefix, symbol)) = ticker_id.split_once(':')
+            && let Some(market) = crate::model::DataSource::from_watchlist_slug(prefix)
+                .and_then(|source| source.yahoo_derivative(symbol))
+        {
+            return Self::derivative(market);
+        }
+        if let Some((prefix, symbol)) = ticker_id.split_once(':')
+            && let Some(market) = crate::model::DataSource::from_watchlist_slug(prefix)
+                .and_then(|source| source.yahoo_market(symbol))
+        {
+            return Self::international(market);
+        }
+        Self::for_kind(kind)
+    }
+
+    pub fn derivative(market: crate::model::YahooDerivative) -> Self {
+        Self {
+            zone: market.timezone(),
+            regular: TradingSession::parse(market.regular_session())
+                .expect("a constant session parses"),
+            premarket: None,
+            postmarket: None,
+            derivative: Some(market),
+        }
+    }
+
+    pub fn international(market: crate::model::YahooMarket) -> Self {
+        Self {
+            zone: market.timezone(),
+            regular: TradingSession::parse(market.regular_session())
+                .expect("a constant session parses"),
+            premarket: None,
+            postmarket: None,
+            derivative: None,
+        }
+    }
+
     /// The sessions of a `syminfo.type`: `"stock"` is a US stock, anything else is taken to trade
     /// all day on UTC like the crypto the app mostly lists.
     pub fn for_kind(kind: &str) -> Self {
@@ -118,6 +159,7 @@ impl MarketSessions {
                 regular: parse("0930-1600:23456"),
                 premarket: Some(parse("0400-0930:23456")),
                 postmarket: Some(parse("1600-2000:23456")),
+                derivative: None,
             }
         } else {
             Self {
@@ -125,6 +167,7 @@ impl MarketSessions {
                 regular: parse("24x7"),
                 premarket: None,
                 postmarket: None,
+                derivative: None,
             }
         }
     }
@@ -156,6 +199,9 @@ impl MarketSessions {
     }
 
     fn same_day(&self, first: i64, second: i64) -> bool {
+        if let Some(market) = self.derivative {
+            return market.trading_day_ms(first) == market.trading_day_ms(second);
+        }
         let (a, b) = (self.local(first), self.local(second));
         (a.year, a.month, a.day) == (b.year, b.month, b.day)
     }
@@ -355,5 +401,67 @@ mod tests {
         );
         assert!(!crypto.ends_regular_session(midnight, HOUR));
         assert_eq!(MarketSessions::for_kind("anything else"), crypto);
+    }
+}
+
+#[cfg(test)]
+mod yahoo_xetra_tests {
+    use super::*;
+
+    #[test]
+    fn xetra_core_hours_follow_berlin_daylight_saving() {
+        let market = MarketSessions::for_symbol("stock", "YAHOO:SAP.DE");
+        assert_eq!(market.zone(), "Europe/Berlin");
+        let winter = crate::pine::time::calendar::make(2026, 1, 12, 8, 0, 0, 0).unwrap();
+        let summer = crate::pine::time::calendar::make(2026, 7, 13, 7, 0, 0, 0).unwrap();
+        for open in [winter, summer] {
+            assert!(market.is_regular(open));
+            assert!(!market.is_regular(open - 60_000));
+            assert!(!market.is_regular(open + 510 * 60_000));
+        }
+    }
+}
+
+#[cfg(test)]
+mod yahoo_international_tests {
+    use super::*;
+
+    #[test]
+    fn london_and_toronto_use_their_own_local_open() {
+        for (symbol, zone, winter_hour, winter_minute, summer_hour) in [
+            ("YAHOO:SHEL.L", "Europe/London", 8, 0, 7),
+            ("YAHOO:RY.TO", "America/Toronto", 14, 30, 13),
+        ] {
+            let market = MarketSessions::for_symbol("stock", symbol);
+            assert_eq!(market.zone(), zone);
+            let winter =
+                crate::pine::time::calendar::make(2026, 1, 12, winter_hour, winter_minute, 0, 0)
+                    .unwrap();
+            let summer =
+                crate::pine::time::calendar::make(2026, 7, 13, summer_hour, winter_minute, 0, 0)
+                    .unwrap();
+            for open in [winter, summer] {
+                assert!(market.is_regular(open));
+                assert!(!market.is_regular(open - 60_000));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod yahoo_derivative_tests {
+    use super::*;
+
+    #[test]
+    fn futures_sunday_evening_and_monday_belong_to_one_session() {
+        let session = MarketSessions::for_symbol("futures", "YAHOO:ES=F");
+        let open = crate::pine::time::calendar::make(2026, 1, 11, 23, 0, 0, 0).unwrap();
+        let midnight = open + 3_600_000;
+        let end = open + 23 * 3_600_000;
+        assert_eq!(session.zone(), "America/Chicago");
+        assert!(!session.is_regular(open - 60_000));
+        assert!(session.is_regular(open));
+        assert!(session.same_day(open, midnight));
+        assert!(!session.is_regular(end));
     }
 }
