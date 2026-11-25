@@ -142,7 +142,8 @@ mod tests {
         state.reconcile_rest(tf, &rest, 3000);
         assert!(state.observe(tf, &rest, observe(300.0, 2900)).is_none());
         assert_eq!(state.observe(tf, &rest, observe(101.0, 3100)).unwrap().high, 102.0);
-        // A preceding candle's floor never blocks the independent next bucket.
+        // A changed preceding candle's newer floor never blocks the independent next bucket.
+        rest.volume += 1.0;
         state.reconcile_rest(tf, &rest, 301_000);
         assert_eq!(state.observe(tf, &rest, observe(107.0, 300_100)).unwrap().open, 107.0);
     }
