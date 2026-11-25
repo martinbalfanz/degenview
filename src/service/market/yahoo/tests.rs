@@ -111,3 +111,41 @@ fn spark_uses_valid_previous_close_and_does_not_invent_volume() {
     assert_eq!(quotes[1].regular_market_volume, None);
     assert_eq!(quotes[1].timestamp, None);
 }
+
+#[test]
+fn spark_index_metadata_is_distinct_from_equities() {
+    let body = r#"{"spark":{"result":[{"symbol":"^VIX","response":[{"meta":{"regularMarketPrice":20,"currency":"USD","instrumentType":"INDEX","exchangeTimezoneName":"America/Chicago"}}]},{"symbol":"^GDAXI","response":[{"meta":{"regularMarketPrice":20000,"currency":"EUR","instrumentType":"INDEX","exchangeTimezoneName":"Europe/Berlin"}}]}]}}"#;
+    let quotes = parse_quotes(body).unwrap();
+    assert!(quotes[0].is_supported_index());
+    assert!(!quotes[0].is_us_equity());
+    assert!(quotes[1].is_supported_index());
+}
+
+#[test]
+fn xetra_quote_requires_verified_exchange_currency_and_zone() {
+    let body = r#"{"spark":{"result":[{"symbol":"SAP.DE","response":[{"meta":{"regularMarketPrice":200,"currency":"EUR","instrumentType":"EQUITY","exchangeTimezoneName":"Europe/Berlin","exchangeName":"GER"}}]},{"symbol":"SAP.DE","response":[{"meta":{"regularMarketPrice":200,"currency":"USD","instrumentType":"EQUITY","exchangeTimezoneName":"Europe/Berlin","exchangeName":"GER"}}]}]}}"#;
+    let quotes = parse_quotes(body).unwrap();
+    assert!(quotes[0].is_supported_equity());
+    assert!(!quotes[0].is_us_equity());
+    assert!(!quotes[1].is_supported_equity());
+}
+
+#[test]
+fn london_spark_prices_and_previous_close_share_a_scale() {
+    let body = r#"{"spark":{"result":[{"symbol":"SHEL.L","response":[{"meta":{"regularMarketPrice":2500,"previousClose":2400,"regularMarketVolume":100,"currency":"GBp","instrumentType":"EQUITY","exchangeTimezoneName":"Europe/London","exchangeName":"LSE"}}]},{"symbol":"SHEL.L","response":[{"meta":{"regularMarketPrice":25,"currency":"USD","instrumentType":"EQUITY","exchangeTimezoneName":"Europe/London","exchangeName":"LSE"}}]}]}}"#;
+    let quotes = parse_quotes(body).unwrap();
+    let scale = quotes[0].equity_price_scale().unwrap();
+    assert_eq!(quotes[0].price * scale, 25.0);
+    assert_eq!(quotes[0].previous_close.unwrap() * scale, 24.0);
+    assert_eq!(quotes[0].regular_market_volume, Some(100.0));
+    assert_eq!(quotes[1].equity_price_scale(), None);
+}
+
+#[test]
+fn derivative_metadata_rejects_wrong_type_currency_or_exchange() {
+    let body = r#"{"spark":{"result":[{"symbol":"EURUSD=X","response":[{"meta":{"regularMarketPrice":1.15,"currency":"USD","instrumentType":"CURRENCY","exchangeTimezoneName":"Europe/London","exchangeName":"CCY"}}]},{"symbol":"GC=F","response":[{"meta":{"regularMarketPrice":2500,"currency":"USD","instrumentType":"FUTURE","exchangeTimezoneName":"America/New_York","exchangeName":"CMX"}}]},{"symbol":"ES=F","response":[{"meta":{"regularMarketPrice":5000,"currency":"EUR","instrumentType":"FUTURE","exchangeTimezoneName":"America/Chicago","exchangeName":"CME"}}]}]}}"#;
+    let quotes = parse_quotes(body).unwrap();
+    assert!(!quotes[0].derivative().unwrap().has_volume());
+    assert!(quotes[1].derivative().unwrap().has_volume());
+    assert!(quotes[2].derivative().is_none());
+}

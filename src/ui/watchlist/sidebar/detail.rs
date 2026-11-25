@@ -216,7 +216,16 @@ pub(super) fn detail_panel(
         Direction::Down => theme::DOWN,
         Direction::Flat => theme::text_secondary(),
     };
-    let last = watchlist::quote::last_text(quote, Some(source));
+    let mut last = watchlist::quote::last_text(quote, Some(source));
+    if let Some(market) = source.yahoo_market(&item.instrument.symbol)
+        && quote.is_some_and(|quote| quote.last.is_some())
+    {
+        last.push_str(&format!(" {}", market.currency()));
+    } else if let Some(market) = source.yahoo_derivative(&item.instrument.symbol)
+        && quote.is_some_and(|quote| quote.last.is_some())
+    {
+        last.push_str(&format!(" {}", market.currency()));
+    }
     let percent = watchlist::quote::percent_text(quote, Some(source));
     let pill_text = if direction == Direction::Flat {
         percent

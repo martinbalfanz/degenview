@@ -4,6 +4,7 @@
 //! Keep vendor timestamps and metadata here; the market adapter owns candle
 //! alignment, session semantics and the mapping to DegenView's instrument model.
 
+use crate::model::{DataSource, YahooDerivative};
 use crate::service::{ProviderError, net::http};
 
 mod adapter;
@@ -79,6 +80,63 @@ pub struct ChartMeta {
     pub current_trading_period: Option<serde_json::Value>,
 }
 
+fn index_price_scale(symbol: &str, currency: Option<&str>, timezone: Option<&str>, kind: Option<&str>) -> Option<f64> {
+    if !DataSource::Yahoo.is_yahoo_index(symbol) || kind != Some("INDEX") {
+        return None;
+    }
+    if let Some(market) = DataSource::Yahoo.yahoo_market(symbol) {
+        if timezone != Some(market.timezone()) {
+            return None;
+        }
+        return market.price_scale(currency?);
+    }
+    (currency == Some("USD") && matches!(timezone, Some("America/New_York" | "America/Chicago"))).then_some(1.0)
+}
+
+fn equity_price_scale(symbol: &str, currency: Option<&str>, timezone: Option<&str>, exchange: Option<&str>, kind: Option<&str>) -> Option<f64> {
+    if !matches!(kind, Some("EQUITY" | "ETF")) || DataSource::Yahoo.is_yahoo_index(symbol)
+        || DataSource::Yahoo.yahoo_derivative(symbol).is_some() {
+        return None;
+    }
+    if let Some(market) = DataSource::Yahoo.yahoo_market(symbol) {
+        if timezone != Some(market.timezone()) || exchange != Some(market.exchange()) {
+            return None;
+        }
+        return market.price_scale(currency?);
+    }
+    (currency == Some("USD") && timezone == Some("America/New_York")).then_some(1.0)
+}
+
+fn derivative_metadata(symbol: &str, currency: Option<&str>, timezone: Option<&str>, exchange: Option<&str>, kind: Option<&str>) -> Option<YahooDerivative> {
+    let market = DataSource::Yahoo.yahoo_derivative(symbol)?;
+    if currency != Some(market.currency()) {
+        return None;
+    }
+    let valid = match market {
+        YahooDerivative::Forex { .. } => kind == Some("CURRENCY")
+            && exchange == Some("CCY")
+            && matches!(timezone, Some("Europe/London" | "America/New_York" | "Etc/UTC" | "UTC" | "GMT")),
+        YahooDerivative::Future { exchange: expected, .. } => kind == Some("FUTURE")
+            && exchange == Some(expected)
+            && matches!(timezone, Some("America/Chicago" | "America/New_York")),
+    };
+    valid.then_some(market)
+}
+
+impl ChartMeta {
+    fn derivative(&self) -> Option<YahooDerivative> {
+        derivative_metadata(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.exchange_name.as_deref(), self.instrument_type.as_deref())
+    }
+
+    fn equity_price_scale(&self) -> Option<f64> {
+        equity_price_scale(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.exchange_name.as_deref(), self.instrument_type.as_deref())
+    }
+
+    fn index_price_scale(&self) -> Option<f64> {
+        index_price_scale(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.instrument_type.as_deref())
+    }
+}
+
 /// Unmodified Yahoo candle. Timestamp is Unix seconds; absent volume is not zero.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Bar {
@@ -115,13 +173,35 @@ pub struct Quote {
     pub currency: Option<String>,
     pub instrument_type: Option<String>,
     pub exchange_timezone_name: Option<String>,
+    pub exchange_name: Option<String>,
 }
 
 impl Quote {
-    pub fn is_us_equity(&self) -> bool {
-        self.currency.as_deref() == Some("USD")
-            && self.exchange_timezone_name.as_deref() == Some("America/New_York")
-            && matches!(self.instrument_type.as_deref(), Some("EQUITY" | "ETF"))
+    pub fn derivative(&self) -> Option<YahooDerivative> {
+        derivative_metadata(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.exchange_name.as_deref(), self.instrument_type.as_deref())
+    }
+
+    pub fn equity_price_scale(&self) -> Option<f64> {
+        equity_price_scale(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.exchange_name.as_deref(), self.instrument_type.as_deref())
+    }
+
+    pub fn index_price_scale(&self) -> Option<f64> {
+        index_price_scale(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.instrument_type.as_deref())
+    }
+
+    #[cfg(test)]
+    fn is_supported_equity(&self) -> bool {
+        self.equity_price_scale().is_some()
+    }
+
+    #[cfg(test)]
+    fn is_supported_index(&self) -> bool {
+        self.index_price_scale().is_some()
+    }
+
+    #[cfg(test)]
+    fn is_us_equity(&self) -> bool {
+        DataSource::Yahoo.yahoo_market(&self.symbol).is_none() && self.is_supported_equity()
     }
 }
 
@@ -249,7 +329,11 @@ pub fn chart(
     extended: bool,
 ) -> Result<Chart, ProviderError> {
     let path = chart_path(symbol, interval, start, end, extended)?;
-    parse_chart(&get(&path)?)
+    let response = parse_chart(&get(&path)?)?;
+    if !response.meta.symbol.eq_ignore_ascii_case(symbol.trim()) {
+        return Err(ProviderError::data("Yahoo returned a different chart symbol"));
+    }
+    Ok(response)
 }
 
 fn parse_chart(body: &str) -> Result<Chart, ProviderError> {
@@ -434,6 +518,7 @@ struct SparkMeta {
     currency: Option<String>,
     instrument_type: Option<String>,
     exchange_timezone_name: Option<String>,
+    exchange_name: Option<String>,
 }
 
 /// One spark batch, matching Wickline's keyless quote method. The caller
@@ -484,6 +569,7 @@ fn parse_quotes(body: &str) -> Result<Vec<Quote>, ProviderError> {
                 currency: meta.currency,
                 instrument_type: meta.instrument_type,
                 exchange_timezone_name: meta.exchange_timezone_name,
+                exchange_name: meta.exchange_name,
             })
         })
         .collect())

@@ -286,16 +286,25 @@ impl PineSubscriptionHost {
 /// Builds the `SymbolInfo` a subscription's `"<source>:<ticker>"` key implies. Ticker id is the
 /// full key; the base currency is left `None` (the runtime treats it as a non-pair).
 pub fn symbol_info(symbol_key: &str) -> SymbolInfo {
-    let ticker = symbol_key
-        .split_once(':')
-        .map(|(_, symbol)| symbol)
-        .unwrap_or(symbol_key);
+    let (source, ticker) = symbol_key.split_once(':').map_or((None, symbol_key), |(prefix, ticker)| {
+        (crate::model::DataSource::from_watchlist_slug(prefix), ticker)
+    });
+    let derivative = source.and_then(|source| source.yahoo_derivative(ticker));
+    let kind = if let Some(market) = derivative {
+        market.kind()
+    } else if source.is_some_and(|source| source.is_yahoo_index(ticker)) {
+        "index"
+    } else if source == Some(crate::model::DataSource::Yahoo) {
+        "stock"
+    } else {
+        "crypto"
+    };
     SymbolInfo {
         ticker: ticker.to_owned(),
         ticker_id: symbol_key.to_owned(),
-        currency: "USD".to_owned(),
-        kind: "crypto".to_owned(),
-        base_currency: None,
+        currency: source.and_then(|source| source.equity_currency(ticker)).unwrap_or("USD").to_owned(),
+        kind: kind.to_owned(),
+        base_currency: derivative.and_then(|market| market.base_currency()).map(str::to_owned),
         ..SymbolInfo::default()
     }
 }

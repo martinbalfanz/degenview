@@ -228,7 +228,7 @@ impl Session {
         );
         // The trading days the risk rules count are the exchange's.
         broker.zone = Some(
-            crate::pine::time::trading_session::MarketSessions::for_kind(&self.symbol.kind).zone(),
+            crate::pine::time::trading_session::MarketSessions::for_symbol(&self.symbol.kind, &self.symbol.ticker_id).zone(),
         );
         RuntimeState {
             broker,

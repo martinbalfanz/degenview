@@ -308,7 +308,16 @@ pub fn instrument_row(ui: &mut egui::Ui, item: &WatchlistInstrument, row: &RowSt
                         Color32::from_rgb(255, 159, 10).gamma_multiply(alpha),
                     )
                 } else {
-                    let price = watchlist::quote::last_text(quote, source);
+                    let mut price = watchlist::quote::last_text(quote, source);
+                    if let Some(market) = item.instrument.source.yahoo_market(&item.instrument.symbol)
+                        && quote.is_some_and(|quote| quote.last.is_some())
+                    {
+                        price.push_str(&format!(" {}", market.currency()));
+                    } else if let Some(market) = item.instrument.source.yahoo_derivative(&item.instrument.symbol)
+                        && quote.is_some_and(|quote| quote.last.is_some())
+                    {
+                        price.push_str(&format!(" {}", market.currency()));
+                    }
                     if change_under_price {
                         let price = kit::digits(
                             ui,

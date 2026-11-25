@@ -88,6 +88,7 @@ fn market(ui: &mut Ui, area: Rect, result: &SearchResult, detail: &Detail) -> Op
         pos2(inner.left(), y),
         inner.width(),
         result.source,
+        &result.full_symbol,
         detail.quote,
     ) + 12.0;
 
@@ -387,6 +388,7 @@ fn price_line(
     at: Pos2,
     width: f32,
     source: DataSource,
+    symbol: &str,
     quote: Option<&WatchlistQuote>,
 ) -> f32 {
     let Some(last) = quote.and_then(|quote| quote.last) else {
@@ -402,9 +404,16 @@ fn price_line(
         ui.painter().galley(at, galley, theme::text_secondary());
         return height.max(40.0);
     };
+    let forex = source.yahoo_derivative(symbol).is_some_and(|market| !market.has_volume());
+    let mut price_text = if forex { format!("{last:.5}") } else { amount(source, last) };
+    if let Some(market) = source.yahoo_market(symbol) {
+        price_text.push_str(&format!(" {}", market.currency()));
+    } else if let Some(market) = source.yahoo_derivative(symbol) {
+        price_text.push_str(&format!(" {}", market.currency()));
+    }
     let price = kit::digits(
         ui,
-        &amount(source, last),
+        &price_text,
         34.0,
         SEMIBOLD,
         theme::text_primary(),
@@ -418,7 +427,9 @@ fn price_line(
     {
         let color = change_color(percent);
         let room = (width - price_width - 12.0).max(40.0);
-        let moved = quote.change.map(|change| signed(change, last, source));
+        let moved = quote.change.map(|change| {
+            if forex { format!("{change:+.5}") } else { signed(change, last, source) }
+        });
         let text = change_text(moved, &signed_percent(percent), |text| {
             kit::digits(ui, text, 17.0, MEDIUM, color, f32::INFINITY)
                 .size()
@@ -471,15 +482,22 @@ fn status_line(ui: &Ui, at: Pos2, result: &SearchResult, quote: Option<&Watchlis
 
 /// The exchange the market is listed on, with its logo and what it trades there.
 fn venue_line(ui: &Ui, at: Pos2, result: &SearchResult) -> f32 {
-    let kind = match trading_kind(result.source) {
-        "" => market_kind(result.source),
-        kind => kind,
+    let kind = if result.source.is_yahoo_index(&result.full_symbol) || result.source.yahoo_derivative(&result.full_symbol).is_some() {
+        super::search::result_kind(result)
+    } else {
+        match trading_kind(result.source) {
+            "" => market_kind(result.source),
+            kind => kind,
+        }
     };
-    let text = tr!(
+    let mut text = tr!(
         "{venue} · {kind}",
         venue = result.source.display_name(),
         kind = kind
     );
+    if let Some(market) = result.source.yahoo_market(&result.full_symbol) {
+        text.push_str(&format!(" · {}", market.name()));
+    }
     let galley = kit::galley(
         ui,
         &text,

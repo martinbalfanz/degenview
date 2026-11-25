@@ -409,6 +409,11 @@ impl ChartCard {
                 ),
                 None => data.source.display_name().to_owned(),
             };
+            if let Some(market) = data.source.yahoo_market(data.symbol) {
+                subtitle.push_str(&format!(" · {} · {}", market.name(), market.currency()));
+            } else if let Some(market) = data.source.yahoo_derivative(data.symbol) {
+                subtitle.push_str(&format!(" · {} · {}", market.kind(), market.currency()));
+            }
             if decor.replay_active {
                 subtitle = tr!("{subtitle} · Replay", subtitle = subtitle);
             }
@@ -649,7 +654,7 @@ impl ChartCard {
                 shown,
                 slot_width,
                 lead,
-                data.source.provides_volume(),
+                data.source.provides_market_volume(data.symbol),
                 style,
                 main_visible,
                 &CrosshairBars {
