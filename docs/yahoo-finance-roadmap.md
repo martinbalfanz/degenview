@@ -11,12 +11,13 @@
 - [x] US indexes and Xetra.
 - [x] Additional international market profiles (London GBp normalization, European exchanges, Toronto).
 - [x] Selected FX and rolling futures symbols.
+- Owner compiled 6833a65 and verified NVDA 1m/5m chart updates. Regular live test timed out; no claim of proven WebSocket delivery. The warning for unused native interval variants is addressed by removing the unused variants.
 - Last owner-confirmed working head: `191cfe140d666b12c51278a038fa9d0b81e83f98`. These are manual confirmations, not a claim that all cargo tests or edge cases passed.
 
 ## P0 — validate current branch before expanding streaming
 
 - [ ] Compile current head, run cargo fmt --all -- --check, cargo check --locked, cargo test --lib, cargo clippy --all-targets --all-features -- -D warnings; follow upstream AGENTS.md and relevant guides. Fix errors before adding scope.
-- [ ] In regular US hours: cargo test --lib live_yahoo_receives_regular_session_tick -- --ignored --nocapture.
+- [ ] Live WebSocket verification: owner reported regular-session test timed out at 6833a65; chart updates on NVDA 1m/5m were confirmed but REST can account for them. Run the revised diagnostic in the matching session: cargo test --lib live_yahoo_receives_extended_session_tick -- --ignored --nocapture or cargo test --lib live_yahoo_receives_regular_session_tick -- --ignored --nocapture. It now distinguishes wrong session, handshake, quiet socket, undecodable frames and rejected tick metadata.
 - [ ] Test watchlist tick updates, quote age, REST fallback, reconnect, proxy changes, symbol changes, no timestamp regression, previous close, cumulative volume. Capture sanitized real protocol fixtures to test envelope variations.
 - [ ] Test NVDA chart with sidebar closed, daily/5m switch, replay, historical pan, tab hide, no extra socket per chart, snapshot. Verify indicative quote and provisional candle overlay update separately from authoritative OHLCV; no Pine/VWAP changes, no persistence of previews.
 - [ ] Confirm quote session/type field handling and ticker subscription behavior; keep REST when vendor data is absent. The current implementation is not certified real-time.
@@ -35,7 +36,8 @@
 ## P2 — extended hours
 
 - [x] Experimental startup opt-in for US stock/ETF intraday history, isolated cache and chart watermark; extended stream admission and explicit extended live test.
-- [ ] Replace startup flag with appropriate persisted per-chart or source setting; review quote reference and Pine/session stats. Validate pre/post session flags, OHLCV, corporate actions, holidays/early closes; do not mix regular and extended history silently.
+- [x] Persist source-wide extended-hours preference in Settings → Yahoo Finance, effective on restart; environment flag retained as explicit diagnostic override.
+- [ ] Review quote reference and Pine/session stats; evaluate per-chart setting or safe immediate reload after validation. Validate pre/post session flags, OHLCV, corporate actions, holidays/early closes; do not mix regular and extended history silently.
 - [ ] Validate extended streaming live, regular/extended session boundaries, cache isolation, closing prints, quote reference and volume semantics. Default regular session. Run cargo test --lib live_yahoo_receives_extended_session_tick -- --ignored --nocapture in premarket/after-hours.
 
 ## P3 — deeper hourly history

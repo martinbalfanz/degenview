@@ -51,7 +51,16 @@ impl QuoteSocket {
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread_shutdown = Arc::clone(&shutdown);
         std::thread::spawn(move || {
-            session.run(&thread_shutdown, |text| {
+            session.run_frames(&thread_shutdown, |frame| {
+                use crate::service::net::ws::Frame;
+                let text = match frame {
+                    Frame::Text(text) => text,
+                    Frame::Binary(bytes) if source == DataSource::Yahoo => {
+                        let Ok(text) = std::str::from_utf8(bytes) else { return true };
+                        text
+                    }
+                    Frame::Binary(_) => return true,
+                };
                 parse(text).is_none_or(|tick| sender.send(tick).is_ok())
             });
         });

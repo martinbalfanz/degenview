@@ -49,7 +49,7 @@ fn zigzag(value: u64) -> i64 {
     ((value >> 1) as i64) ^ -((value & 1) as i64)
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Pricing<'a> {
     symbol: Option<&'a str>,
     price: Option<f64>,
@@ -104,13 +104,19 @@ pub(super) fn parse_tick(text: &str) -> Option<StreamTick> {
     parse_tick_with_session(text, crate::model::market::yahoo_session::extended_enabled())
 }
 
-fn parse_tick_with_session(text: &str, extended: bool) -> Option<StreamTick> {
+fn payload(text: &str) -> Option<Vec<u8>> {
     if text.len() > MAX_MESSAGE {
         return None;
     }
     let envelope: Value = serde_json::from_str(text).ok()?;
-    let message = envelope.get("message")?.as_str()?;
-    let data = encoding::base64_decode(message)?;
+    encoding::base64_decode(envelope.get("message")?.as_str()?)
+}
+
+fn parse_tick_with_session(text: &str, extended: bool) -> Option<StreamTick> {
+    if text.len() > MAX_MESSAGE {
+        return None;
+    }
+    let data = payload(text)?;
     let pricing = decode(&data)?;
     let symbol = pricing.symbol?;
     let price = pricing.price.filter(|price| price.is_finite() && *price > 0.0)?;
@@ -182,36 +188,78 @@ mod tests {
         assert_eq!(serde_json::from_str::<Value>(&session.subscribe[0]).unwrap(), json!({"subscribe":["NVDA","SPY"]}));
     }
 
+    // This intentionally uses one direct connection, not the reconnecting
+    // worker: distinguish a handshake error, a quiet feed and rejected messages.
+    fn probe(extended_only: bool) {
+        use crate::model::market::yahoo_session::{Session as TradingSession, session_at};
+        use crate::service::net::ws::{Health, connect};
+        use std::time::Instant;
+        use tungstenite::Message;
+        let now = crate::clock::now_ms();
+        let wanted = |ts| if extended_only {
+            matches!(session_at(ts), Some(TradingSession::Pre | TradingSession::Post))
+        } else {
+            session_at(ts) == Some(TradingSession::Regular)
+        };
+        assert!(wanted(now), "Wrong US session for this test: {:?}. Use the matching regular/extended test.", session_at(now));
+        let session = session(&["NVDA".into(), "SPY".into(), "TSLA".into()]);
+        let (mut socket, route) = connect(&session.url, &session.host, session.port)
+            .expect("Yahoo WebSocket handshake failed");
+        println!("Yahoo WebSocket handshake OK");
+        for message in &session.subscribe {
+            socket.send(Message::Text(message.as_str().into())).expect("Yahoo subscribe failed");
+        }
+        println!("Subscribed to NVDA, SPY, TSLA");
+        let mut health = Health::new(session.max_data_silence, session.keepalive, route);
+        let started = Instant::now();
+        let mut frames = 0;
+        let mut decoded = 0;
+        while started.elapsed() < Duration::from_secs(90) {
+            let frame = health.read(&mut socket).expect("Yahoo WebSocket read failed");
+            let text = match &frame {
+                Some(Message::Text(text)) => text.as_str(),
+                Some(Message::Binary(bytes)) => match std::str::from_utf8(bytes) {
+                    Ok(text) => text,
+                    Err(_) => {
+                        frames += 1;
+                        if frames <= 8 { println!("Non-UTF8 binary frame: {} bytes", bytes.len()); }
+                        continue;
+                    }
+                },
+                Some(Message::Close(reason)) => panic!("Yahoo closed socket: {reason:?}"),
+                _ => continue,
+            };
+            frames += 1;
+            if let Some(data) = payload(text)
+                && let Some(pricing) = decode(&data)
+            {
+                decoded += 1;
+                if frames <= 8 {
+                    println!("Decoded PricingData: {pricing:?}; timestamp session: {:?}", pricing.timestamp.and_then(session_at));
+                }
+            } else if frames <= 8 {
+                println!("Unrecognized message ({} bytes); JSON fields: {:?}", text.len(), serde_json::from_str::<Value>(text).ok().and_then(|v| v.as_object().map(|obj| obj.keys().cloned().collect::<Vec<_>>())));
+            }
+            if let Some(tick) = parse_tick_with_session(text, extended_only)
+                && tick.quote.timestamp_ms.is_some_and(wanted)
+                && ["NVDA", "SPY", "TSLA"].contains(&tick.product_id.as_str())
+            {
+                println!("Accepted {}: {} at {:?}", tick.product_id, tick.quote.price, tick.quote.timestamp_ms);
+                return;
+            }
+        }
+        panic!("Yahoo sent {frames} frames ({decoded} decoded PricingData) but no accepted session tick in 90s");
+    }
+
     #[test]
     #[ignore = "needs network and US premarket/after-hours activity"]
     fn live_yahoo_receives_extended_session_tick() {
-        let session = session(&["NVDA".into(), "SPY".into(), "TSLA".into()]);
-        let shutdown = std::sync::atomic::AtomicBool::new(false);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        std::thread::scope(|scope| {
-            scope.spawn(|| session.run(&shutdown, |text| {
-                if let Some(tick) = parse_tick_with_session(text, true)
-                    && tick.quote.timestamp_ms.is_some_and(|ts| matches!(crate::model::market::yahoo_session::session_at(ts), Some(crate::model::market::yahoo_session::Session::Pre | crate::model::market::yahoo_session::Session::Post)))
-                {
-                    let _ = sender.send(tick);
-                    return false;
-                }
-                true
-            }));
-            let result = receiver.recv_timeout(Duration::from_secs(90));
-            shutdown.store(true, std::sync::atomic::Ordering::Release);
-            let tick = result.expect("Yahoo extended-session tick within 90s");
-            println!("{}: {} at {:?}", tick.product_id, tick.quote.price, tick.quote.timestamp_ms);
-        });
+        probe(true);
     }
 
     #[test]
     #[ignore = "needs network and an open US market"]
     fn live_yahoo_receives_regular_session_tick() {
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let _socket = super::super::QuoteSocket::connect(DataSource::Yahoo, vec!["NVDA".into(), "SPY".into()], sender).unwrap();
-        let tick = receiver.recv_timeout(Duration::from_secs(60)).expect("Yahoo regular-session tick");
-        assert!(["NVDA", "SPY"].contains(&tick.product_id.as_str()));
-        assert!(tick.quote.timestamp_ms.is_some());
+        probe(false);
     }
 }

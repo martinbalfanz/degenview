@@ -31,11 +31,8 @@ pub enum Interval {
     Minute,
     FiveMinutes,
     FifteenMinutes,
-    ThirtyMinutes,
     Hour,
     Day,
-    Week,
-    Month,
 }
 
 impl Interval {
@@ -44,20 +41,17 @@ impl Interval {
             Self::Minute => "1m",
             Self::FiveMinutes => "5m",
             Self::FifteenMinutes => "15m",
-            Self::ThirtyMinutes => "30m",
             Self::Hour => "60m",
             Self::Day => "1d",
-            Self::Week => "1wk",
-            Self::Month => "1mo",
         }
     }
 
     pub fn max_window_seconds(self) -> Option<i64> {
         match self {
             Self::Minute => Some(7 * DAY),
-            Self::FiveMinutes | Self::FifteenMinutes | Self::ThirtyMinutes => Some(60 * DAY),
+            Self::FiveMinutes | Self::FifteenMinutes => Some(60 * DAY),
             Self::Hour => Some(730 * DAY),
-            Self::Day | Self::Week | Self::Month => None,
+            Self::Day => None,
         }
     }
 }

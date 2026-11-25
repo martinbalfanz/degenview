@@ -1,5 +1,5 @@
-//! Experimental process-wide session policy. Read once at startup/first use;
-//! never change the environment in the running application. Extended history
+//! Process-wide session policy, loaded from saved settings before market workers start.
+//! Restart to change it so open chart history cannot mix two session policies. Extended history
 //! is limited to US equity/ETF intraday candles.
 use crate::model::{DataSource, Timeframe};
 use std::sync::OnceLock;
@@ -11,9 +11,28 @@ pub enum Session {
     Post,
 }
 
+pub const SETTINGS_KEY: &str = "market.yahoo.extended_hours";
+static ENABLED: OnceLock<bool> = OnceLock::new();
+
+fn environment_override() -> Option<bool> {
+    match std::env::var("DEGENVIEW_YAHOO_EXTENDED_HOURS").as_deref() {
+        Ok("1") => Some(true),
+        Ok("0") => Some(false),
+        _ => None,
+    }
+}
+
+/// Called before market workers and restored charts start.
+pub fn initialize(saved: bool) {
+    let _ = ENABLED.set(environment_override().unwrap_or(saved));
+}
+
 pub fn extended_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("DEGENVIEW_YAHOO_EXTENDED_HOURS").as_deref() == Ok("1"))
+    *ENABLED.get_or_init(|| environment_override().unwrap_or(false))
+}
+
+pub fn overridden_by_environment() -> bool {
+    environment_override().is_some()
 }
 
 pub fn extended_candles(source: DataSource, symbol: &str, timeframe: Timeframe) -> bool {
