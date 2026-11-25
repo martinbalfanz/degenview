@@ -237,7 +237,13 @@ impl AssetPickerState {
         let searches = self.sources().into_iter().map(|source| {
             let search = Arc::clone(&self.search);
             let query = query.clone();
-            work_queue::start_search(source, Some(ctx), move || (source, search(source, &query)))
+            work_queue::start_search(source, Some(ctx), move || {
+                let answer = search(source, &query).map(|mut hits| {
+                    hits.retain(|hit| !hit.source.is_yahoo_index(&hit.full_symbol));
+                    hits
+                });
+                (source, answer)
+            })
         });
         self.inbox = Some(PendingAll::new(searches));
     }

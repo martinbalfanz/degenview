@@ -111,3 +111,12 @@ fn spark_uses_valid_previous_close_and_does_not_invent_volume() {
     assert_eq!(quotes[1].regular_market_volume, None);
     assert_eq!(quotes[1].timestamp, None);
 }
+
+#[test]
+fn spark_index_metadata_is_distinct_from_equities() {
+    let body = r#"{"spark":{"result":[{"symbol":"^VIX","response":[{"meta":{"regularMarketPrice":20,"currency":"USD","instrumentType":"INDEX","exchangeTimezoneName":"America/Chicago"}}]},{"symbol":"^GDAXI","response":[{"meta":{"regularMarketPrice":20000,"currency":"EUR","instrumentType":"INDEX","exchangeTimezoneName":"Europe/Berlin"}}]}]}}"#;
+    let quotes = parse_quotes(body).unwrap();
+    assert!(quotes[0].is_supported_index());
+    assert!(!quotes[0].is_us_equity());
+    assert!(!quotes[1].is_supported_index());
+}

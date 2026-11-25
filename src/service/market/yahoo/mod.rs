@@ -4,6 +4,7 @@
 //! Keep vendor timestamps and metadata here; the market adapter owns candle
 //! alignment, session semantics and the mapping to DegenView's instrument model.
 
+use crate::model::DataSource;
 use crate::service::{ProviderError, net::http};
 
 mod adapter;
@@ -79,6 +80,25 @@ pub struct ChartMeta {
     pub current_trading_period: Option<serde_json::Value>,
 }
 
+fn is_supported_index(symbol: &str, currency: Option<&str>, timezone: Option<&str>, kind: Option<&str>) -> bool {
+    DataSource::Yahoo.is_yahoo_index(symbol)
+        && currency == Some("USD")
+        && matches!(timezone, Some("America/New_York" | "America/Chicago"))
+        && kind == Some("INDEX")
+}
+
+impl ChartMeta {
+    fn is_us_equity(&self) -> bool {
+        self.currency.as_deref() == Some("USD")
+            && self.exchange_timezone_name.as_deref() == Some("America/New_York")
+            && matches!(self.instrument_type.as_deref(), Some("EQUITY" | "ETF"))
+    }
+
+    fn is_supported_index(&self) -> bool {
+        is_supported_index(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.instrument_type.as_deref())
+    }
+}
+
 /// Unmodified Yahoo candle. Timestamp is Unix seconds; absent volume is not zero.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Bar {
@@ -118,6 +138,10 @@ pub struct Quote {
 }
 
 impl Quote {
+    pub fn is_supported_index(&self) -> bool {
+        is_supported_index(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.instrument_type.as_deref())
+    }
+
     pub fn is_us_equity(&self) -> bool {
         self.currency.as_deref() == Some("USD")
             && self.exchange_timezone_name.as_deref() == Some("America/New_York")
@@ -249,7 +273,11 @@ pub fn chart(
     extended: bool,
 ) -> Result<Chart, ProviderError> {
     let path = chart_path(symbol, interval, start, end, extended)?;
-    parse_chart(&get(&path)?)
+    let response = parse_chart(&get(&path)?)?;
+    if !response.meta.symbol.eq_ignore_ascii_case(symbol.trim()) {
+        return Err(ProviderError::data("Yahoo returned a different chart symbol"));
+    }
+    Ok(response)
 }
 
 fn parse_chart(body: &str) -> Result<Chart, ProviderError> {

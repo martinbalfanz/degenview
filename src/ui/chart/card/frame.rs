@@ -649,7 +649,7 @@ impl ChartCard {
                 shown,
                 slot_width,
                 lead,
-                data.source.provides_volume(),
+                data.source.provides_market_volume(data.symbol),
                 style,
                 main_visible,
                 &CrosshairBars {

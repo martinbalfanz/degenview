@@ -158,6 +158,15 @@ pub fn market_kind(source: DataSource) -> &'static str {
     }
 }
 
+/// Instrument-specific kind for search hits (Yahoo serves stocks and index levels).
+pub fn result_kind(result: &SearchResult) -> &'static str {
+    if result.source.is_yahoo_index(&result.full_symbol) {
+        tr!("Index")
+    } else {
+        market_kind(result.source)
+    }
+}
+
 /// How a market trades, for the "also trades as" column.
 pub fn trading_kind(source: DataSource) -> &'static str {
     match source {

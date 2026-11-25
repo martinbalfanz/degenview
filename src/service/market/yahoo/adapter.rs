@@ -1,4 +1,4 @@
-//! Native Yahoo chart adapter. US equities only until the app carries
+//! Native Yahoo chart adapter. US equities and selected US indexes until the app carries
 //! per-instrument currency, asset type and exchange-session metadata.
 
 use super::{Chart, Instrument, Interval, chart, search};
@@ -11,7 +11,10 @@ pub static YAHOO: Yahoo = Yahoo;
 const DAY_MS: i64 = 86_400_000;
 const MAX_BARS: usize = 10_000;
 
-fn is_us_equity(hit: &Instrument) -> bool {
+fn is_supported(hit: &Instrument) -> bool {
+    if hit.quote_type == "INDEX" {
+        return DataSource::Yahoo.is_yahoo_index(&hit.symbol);
+    }
     matches!(hit.quote_type.as_str(), "EQUITY" | "ETF")
         && matches!(
             hit.exchange_code.as_deref(),
@@ -50,12 +53,10 @@ fn collect_sessions(value: &serde_json::Value, sessions: &mut Vec<(i64, i64)>) {
 /// bars, and real UTC instants for intraday bars (not today's GMT offset).
 fn native_bars(chart: Chart, timeframe: Timeframe) -> Result<Vec<Kline>, ProviderError> {
     let meta = chart.meta;
-    if meta.currency.as_deref() != Some("USD")
-        || meta.exchange_timezone_name.as_deref() != Some("America/New_York")
-        || !matches!(meta.instrument_type.as_deref(), Some("EQUITY" | "ETF"))
-    {
+    let index = meta.is_supported_index();
+    if !index && !meta.is_us_equity() {
         return Err(ProviderError::other(
-            "Yahoo currently supports US stocks and ETFs only",
+            "Yahoo currently supports US stocks, ETFs and selected US indexes only",
         ));
     }
     let mut sessions = Vec::new();
@@ -68,8 +69,14 @@ fn native_bars(chart: Chart, timeframe: Timeframe) -> Result<Vec<Kline>, Provide
 
     let mut out: Vec<Kline> = Vec::new();
     for bar in chart.bars {
-        // Kline has no optional volume: never invent a zero share count.
-        let Some(volume) = bar.volume else {
+        // Index levels are not traded shares. Kline currently has no
+        // optional volume: use its zero placeholder only for indexes, and
+        // hide volume for those symbols at presentation boundaries.
+        let volume = if index {
+            0.0
+        } else if let Some(volume) = bar.volume {
+            volume
+        } else {
             continue;
         };
         let Some(timestamp) = bar.timestamp.checked_mul(1_000) else {
@@ -80,7 +87,7 @@ fn native_bars(chart: Chart, timeframe: Timeframe) -> Result<Vec<Kline>, Provide
         // when metadata confirms the exact close and the previous bar
         // belongs to that same regular session.
         if timeframe.is_intraday()
-            && volume == 0.0
+            && bar.volume.is_none_or(|volume| volume == 0.0)
             && bar.open == bar.close
             && bar.high == bar.low
             && bar.high == bar.close
@@ -212,7 +219,7 @@ impl MarketSource for Yahoo {
     fn search_tickers(&self, query: &str) -> Result<Vec<SearchResult>, ProviderError> {
         let hits = search(query)?
             .into_iter()
-            .filter(is_us_equity)
+            .filter(is_supported)
             .map(|hit| {
                 let label = format!("{}{NAME_SEPARATOR}{}", hit.symbol, hit.name);
                 SearchResult::new(DataSource::Yahoo, label, hit.symbol)
@@ -310,6 +317,25 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].close, 12.0);
         assert_eq!(result[0].volume, 450.0);
+    }
+
+    #[test]
+    fn selected_us_indexes_keep_price_history_without_share_volume() {
+        let mut chart = stock(vec![bar(86_400, 100.0, None), bar(172_800, 101.0, Some(123.0))]);
+        chart.meta.symbol = "^IXIC".into();
+        chart.meta.instrument_type = Some("INDEX".into());
+        let result = native_bars(chart, Timeframe::DAY_1).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].close, 100.0);
+        assert!(result.iter().all(|bar| bar.volume == 0.0));
+    }
+
+    #[test]
+    fn unapproved_index_is_not_accepted_even_with_us_metadata() {
+        let mut chart = stock(Vec::new());
+        chart.meta.symbol = "^OTHER".into();
+        chart.meta.instrument_type = Some("INDEX".into());
+        assert!(native_bars(chart, Timeframe::DAY_1).is_err());
     }
 
     #[test]

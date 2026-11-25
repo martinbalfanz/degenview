@@ -119,6 +119,23 @@ impl DataSource {
         matches!(self, Self::Alpaca | Self::Yahoo)
     }
 
+    /// US index tickers supported by Yahoo. The allowlist keeps the existing
+    /// USD and US-session conventions honest until instrument metadata is
+    /// available throughout the application.
+    pub fn is_yahoo_index(self, symbol: &str) -> bool {
+        self == Self::Yahoo
+            && matches!(
+                symbol.trim().to_ascii_uppercase().as_str(),
+                "^GSPC" | "^IXIC" | "^NDX" | "^DJI" | "^RUT" | "^VIX"
+            )
+    }
+
+    /// Index levels are not traded shares. Do not present index feed volume
+    /// (which may be absent or an aggregate) as ordinary share volume.
+    pub fn provides_market_volume(self, symbol: &str) -> bool {
+        self.provides_volume() && !self.is_yahoo_index(symbol)
+    }
+
     /// Whether this source reports per-candle turnover for the volume bars to draw. CoinGecko's
     /// OHLC endpoint has no volume column, and the line charts report none at all.
     pub fn provides_volume(self) -> bool {

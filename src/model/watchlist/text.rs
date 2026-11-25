@@ -308,8 +308,10 @@ fn instrument_from(token: &str) -> Result<WatchlistInstrument, String> {
         DataSource::Alpaca => stock(&rest),
         DataSource::Yahoo => {
             let symbol = rest.to_uppercase();
-            if !symbol.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-                return Err("Not a Yahoo US stock ticker".to_owned());
+            if !source.is_yahoo_index(&symbol)
+                && !symbol.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+            {
+                return Err("Not a supported Yahoo US stock or index ticker".to_owned());
             }
             Ok(item(source, &symbol, &symbol, &symbol))
         }

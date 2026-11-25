@@ -358,15 +358,17 @@ fn yahoo(requests: &[QuoteRequest]) -> Result<HashMap<String, SourceQuote>, Quot
         .iter()
         .filter_map(|request| {
             let quote = quotes.iter().find(|quote| {
-                quote.symbol.eq_ignore_ascii_case(&request.symbol) && quote.is_us_equity()
+                quote.symbol.eq_ignore_ascii_case(&request.symbol)
+                    && (quote.is_us_equity() || quote.is_supported_index())
             })?;
+            let volume = if quote.is_us_equity() { quote.regular_market_volume } else { None };
             Some((
                 request.symbol.clone(),
                 SourceQuote {
                     price: quote.price,
                     previous_day_price: quote.previous_close,
-                    volume_24h: quote.regular_market_volume,
-                    volume_kind: quote.regular_market_volume.map(|_| VolumeKind::Shares),
+                    volume_24h: volume,
+                    volume_kind: volume.map(|_| VolumeKind::Shares),
                     timestamp_ms: quote.timestamp.and_then(|seconds| seconds.checked_mul(1_000)),
                 },
             ))
