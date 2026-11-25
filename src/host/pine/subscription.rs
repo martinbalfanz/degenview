@@ -201,10 +201,15 @@ impl PineSubscriptionHost {
         instances: &[PineInstance],
         now_ms: i64,
     ) -> Vec<(PineAlertSubscription, AlertEvent)> {
-        self.run_active_with_policy(
-            chart_id, symbol_key, timeframe, bars, chart, instances, now_ms,
-            yahoo_session::snapshot(),
-        )
+        let policy = yahoo_session::snapshot();
+        let fired = self.run_active_with_policy(
+            chart_id, symbol_key, timeframe, bars, chart, instances, now_ms, policy,
+        );
+        if yahoo_session::snapshot() == policy {
+            fired
+        } else {
+            Vec::new()
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -629,6 +629,23 @@ impl DebugPanel {
         self.reveal_stop = false;
     }
 
+    /// Drop the old dataset's run and its output, without touching breakpoints
+    /// or watches. A new debugging session is started explicitly by the user.
+    pub(in crate::pine_studio) fn invalidate_session_policy(&mut self) {
+        let had_session = self.session.is_some();
+        self.end_session();
+        self.outcome = None;
+        self.logs = LogHistory::default();
+        self.log_epoch = now_epoch();
+        self.hits.clear();
+        if had_session {
+            self.notice = Some(Notice {
+                text: tr!("Trading session changed. Start debugging again to use the new data.").to_owned(),
+                error: false,
+            });
+        }
+    }
+
     /// Applies the toolbar's commands. `Restart` is the manager's, because it needs a fresh feed.
     pub fn command(&mut self, command: DebugCommand) -> bool {
         let Some(session) = self.session.as_mut() else {

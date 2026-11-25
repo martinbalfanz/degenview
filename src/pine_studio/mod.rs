@@ -470,7 +470,7 @@ impl PineStudio {
         if !self.preview.sync_session(crate::model::market::yahoo_session::snapshot()) {
             return false;
         }
-        self.debug.end_session();
+        self.debug.invalidate_session_policy();
         self.profiler.script_changed();
         self.profiler_now = None;
         true

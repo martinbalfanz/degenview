@@ -581,7 +581,6 @@ impl ChartWorkspace {
         changed
     }
 
-
     /// Draws the workspace. The paper host is passed as its shared handle and locked only around
     /// the parts that edit it: the order sheet and the venue pill read it through the trading hub,
     /// which locks the same mutex, so a guard held across the whole frame would deadlock them.

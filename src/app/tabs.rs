@@ -491,11 +491,7 @@ impl TabState {
         }
     }
 
-    /// Keeps quotes coming for the market each chart tab shows, and repaints the tab windows
-    /// when any quote moved. One owner asks for all of them, however many tabs and windows
-    /// there are: the coordinator merges demand by market, so a market a sidebar, an alert or a
-    /// portfolio card already follows costs nothing more. Unlike a sidebar's lease it does not
-    /// lapse, so a tab in the background keeps its price. `broker_revision` is the broker host's.
+    /// Synchronize session-dependent data before background consumers read it.
     pub(super) fn tick_yahoo_sessions(&mut self, ctx: &egui::Context) {
         let revision = crate::model::market::yahoo_session::snapshot().revision;
         let mut changed = revision != self.yahoo_session_revision;
@@ -514,6 +510,11 @@ impl TabState {
         }
     }
 
+    /// Keeps quotes coming for the market each chart tab shows, and repaints the tab windows
+    /// when any quote moved. One owner asks for all of them, however many tabs and windows
+    /// there are: the coordinator merges demand by market, so a market a sidebar, an alert or a
+    /// portfolio card already follows costs nothing more. Unlike a sidebar's lease it does not
+    /// lapse, so a tab in the background keeps its price. `broker_revision` is the broker host's.
     pub(super) fn tick_quotes(
         &mut self,
         ctx: &egui::Context,
