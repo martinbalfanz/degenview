@@ -823,13 +823,16 @@ fn section_yahoo(
             },
         );
         ui.add_space(8.0);
-        ui.label(if yahoo_session::extended_enabled() {
-            tr!("Current session: regular and extended hours")
-        } else {
-            tr!("Current session: regular hours")
-        });
+        ui.label(kit::text(
+            if yahoo_session::extended_enabled() {
+                tr!("Current session: regular and extended hours")
+            } else {
+                tr!("Current session: regular hours")
+            },
+            kit::size::BODY, kit::REGULAR, theme::text_secondary(),
+        ));
         if saved != yahoo_session::extended_enabled() && !yahoo_session::overridden_by_environment() {
-            ui.label(tr!("Restart required to apply the saved setting."));
+            ui.label(kit::text(tr!("Restart required to apply the saved setting."), kit::size::BODY, kit::REGULAR, theme::text_secondary()));
         }
         if let Some(status) = status {
             status_message(ui, &status.text(), status.is_error);
@@ -837,7 +840,7 @@ fn section_yahoo(
     });
     section(ui, tr!("Data availability"), None, |ui| {
         card(ui, |ui| {
-            ui.label(tr!("No API key required. Yahoo data is indicative and may be delayed. Daily and longer candles remain regular-session bars."));
+            ui.label(kit::text(tr!("No API key required. Yahoo data is indicative and may be delayed. Daily and longer candles remain regular-session bars."), kit::size::BODY, kit::REGULAR, theme::text_secondary()));
         });
     });
 }

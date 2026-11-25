@@ -1,7 +1,8 @@
 //! Yahoo PricingData envelope: JSON carrying a base64 protobuf message.
 //! Protocol reference: Wickline server.mjs (MIT, docs/yahoo-finance.md).
-//! Only regular-session USD equity/ETF prices are admitted here. A REST
-//! snapshot must first validate the instrument in the quote engine.
+//! USD equity/ETF incremental ticks may omit currency and other fields.
+//! An explicit non-USD currency is rejected; the quote engine requires a
+//! validated REST snapshot before any tick can affect an instrument.
 use super::StreamTick;
 use crate::model::{DataSource, encoding};
 use crate::model::watchlist::quote::{SourceQuote, VolumeKind};
@@ -121,7 +122,7 @@ fn parse_tick_with_session(text: &str, extended: bool) -> Option<StreamTick> {
     let symbol = pricing.symbol?;
     let price = pricing.price.filter(|price| price.is_finite() && *price > 0.0)?;
     let timestamp = pricing.timestamp.filter(|timestamp| *timestamp > 0)?;
-    if !DataSource::Yahoo.yahoo_stream_symbol(symbol) || pricing.currency != Some("USD")
+    if !DataSource::Yahoo.yahoo_stream_symbol(symbol) || pricing.currency.is_some_and(|currency| currency != "USD")
         || !crate::model::market::yahoo_session::admits_wire_session(pricing.session, timestamp, extended)
     {
         return None;
@@ -147,32 +148,41 @@ fn parse_tick_with_session(text: &str, extended: bool) -> Option<StreamTick> {
 mod tests {
     use super::*;
 
-    fn message(session: Option<u8>, timestamp: i64) -> String {
+    fn message(session: Option<u8>, timestamp: i64, currency: Option<&str>) -> String {
         let mut bytes = vec![10, 4, b'N', b'V', b'D', b'A', 21];
         bytes.extend_from_slice(&123.5f32.to_le_bytes());
         bytes.push(24);
         let mut stamp = (timestamp as u64) << 1;
         while stamp >= 128 { bytes.push((stamp as u8 & 0x7f) | 0x80); stamp >>= 7; }
         bytes.push(stamp as u8);
-        bytes.extend_from_slice(&[34, 3, b'U', b'S', b'D']);
+        if let Some(currency) = currency {
+            bytes.extend_from_slice(&[34, currency.len() as u8]);
+            bytes.extend_from_slice(currency.as_bytes());
+        }
         if let Some(session) = session { bytes.extend_from_slice(&[56, session]); }
         bytes.extend_from_slice(&[72, 20]);
         json!({"message": encoding::base64_encode(&bytes)}).to_string()
     }
 
+    fn premarket_timestamp() -> i64 { 1795607849000 }
+
     #[test]
-    fn pricing_data_requires_explicit_currency_session_and_vendor_timestamp() {
+    fn pricing_data_allows_sparse_currency_but_checks_explicit_currency_and_session() {
         let timestamp = crate::pine::time::calendar::make(2026, 11, 25, 15, 0, 0, 0).unwrap();
-        let tick = parse_tick_with_session(&message(Some(1), timestamp), false).unwrap();
+        let tick = parse_tick_with_session(&message(Some(1), timestamp, Some("USD")), false).unwrap();
         assert_eq!(tick.product_id, "NVDA");
         assert_eq!(tick.quote.price, 123.5);
         assert_eq!(tick.quote.timestamp_ms, Some(timestamp));
         assert_eq!(tick.quote.volume_24h, Some(10.0));
-        assert!(parse_tick_with_session(&message(Some(0), timestamp), false).is_none());
-        assert!(parse_tick_with_session(&message(Some(2), timestamp), false).is_none());
+        assert!(parse_tick_with_session(&message(Some(1), timestamp, None), false).is_some());
+        assert!(parse_tick_with_session(&message(Some(1), timestamp, Some("EUR")), false).is_none());
+        // Observed live payload: PRE, price and vendor time, no currency/volume.
+        assert!(parse_tick_with_session(&message(Some(0), premarket_timestamp(), None), true).is_some());
+        assert!(parse_tick_with_session(&message(Some(0), timestamp, Some("USD")), false).is_none());
+        assert!(parse_tick_with_session(&message(Some(2), timestamp, Some("USD")), false).is_none());
         let pre = timestamp - 3 * 3_600_000;
-        assert!(parse_tick_with_session(&message(None, pre), false).is_none());
-        let tick = parse_tick_with_session(&message(None, pre), true).unwrap();
+        assert!(parse_tick_with_session(&message(None, pre, None), false).is_none());
+        let tick = parse_tick_with_session(&message(None, pre, None), true).unwrap();
         assert_eq!(tick.quote.timestamp_ms, Some(pre));
         assert_eq!(tick.quote.volume_24h, None);
         assert!(parse_tick(r#"{"message":"CgQ="}"#).is_none());

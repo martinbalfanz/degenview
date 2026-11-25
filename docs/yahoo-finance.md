@@ -104,3 +104,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+### Live protocol finding (2026-11-25)
+The owner established a successful premarket WebSocket handshake, subscription, and decoded NVDA/TSLA observations with millisecond timestamps, PRE enum 0, and absent currency and volume. The strict initial decoder rejected those sparse ticks. Accept an absent currency only for the restricted US ticker scope and require an independently validated REST quote in the engine. Explicit non-USD is still rejected. Keep the REST baseline separately from the stream; use a prior regular close in premarket, current previous close in regular hours, and a confirmed near-close regular price after hours. Extended volume is absent. Live end-to-end acceptance and watchlist presentation need retesting.

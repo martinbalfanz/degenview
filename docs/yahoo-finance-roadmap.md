@@ -56,3 +56,6 @@
 ## Handoff procedure
 
 Read this roadmap and provider notes, inspect PR #1 and current branch head, then select the first uncompleted task in priority order. Record exact commits, outcomes and remaining uncertainties here after each increment. Keep main untouched. The original implementation environment could access GitHub but not build Rust or reach live Yahoo; the owner runs local tests. Do not mark an item validated until evidence is available. If a review or local test reports an error, fix that before expanding scope.
+
+### 2026-11-25 owner feedback
+Settings persisted across restart. NVDA and TSLA premarket socket frames decoded successfully with missing currency and volume; strict currency requirement caused timeout. This increment accepts sparse USD-scope ticks after REST metadata validation, maintains a separate REST baseline for watchlist change/volume, and restyles secondary text. Validate both live tests and watchlist in the app. The restart requirement was questioned: remove only after capturing session policy per request/cache key, invalidating in-flight chart and overlay requests and Pine security caches, clearing stale extended watchlist quotes, and auditing background consumers. Do not mix histories or silently change script inputs.
