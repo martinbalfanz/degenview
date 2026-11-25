@@ -6,6 +6,7 @@ mod coinbase;
 mod gateio;
 mod kraken;
 mod okx;
+mod yahoo;
 
 use crate::model::DataSource;
 use crate::model::watchlist::quote::SourceQuote;
@@ -44,6 +45,7 @@ impl QuoteSocket {
             DataSource::Kraken => (kraken::session(&products), kraken::parse_tick),
             DataSource::Bybit => (bybit::session(&products), bybit::parse_tick),
             DataSource::Gate => (gateio::session(&products), gateio::parse_tick),
+            DataSource::Yahoo => (yahoo::session(&products), yahoo::parse_tick),
             _ => return None,
         };
         let shutdown = Arc::new(AtomicBool::new(false));

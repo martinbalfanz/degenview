@@ -298,13 +298,21 @@ impl DataSource {
     ];
 
     /// The sources whose watchlist prices come from a shared ticker socket, REST filling in.
-    pub const QUOTE_STREAMS: [DataSource; 5] = [
+    pub const QUOTE_STREAMS: [DataSource; 6] = [
         DataSource::Coinbase,
         DataSource::Okx,
         DataSource::Kraken,
         DataSource::Bybit,
         DataSource::Gate,
+        DataSource::Yahoo,
     ];
+
+    /// First Yahoo streaming scope: USD equities and ETFs, not indexes, FX,
+    /// futures or non-US listings. REST metadata still has to validate them.
+    pub fn yahoo_stream_symbol(self, symbol: &str) -> bool {
+        self == Self::Yahoo && !symbol.is_empty() && symbol.len() <= 12
+            && symbol.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    }
 
     /// Whether watchlist prices of this source come from a ticker socket.
     pub fn streams_quotes(self) -> bool {
