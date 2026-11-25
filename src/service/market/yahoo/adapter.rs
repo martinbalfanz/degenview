@@ -166,6 +166,9 @@ fn fetch_range(
     now_ms: i64,
     extended: bool,
 ) -> Result<Vec<Kline>, ProviderError> {
+    if crate::model::market::yahoo_session::native_hourly(DataSource::Yahoo, symbol, timeframe) {
+        return fetch_native_hourly(symbol, start_ms, end_ms, max, now_ms, extended);
+    }
     let plan = crate::service::market::candles::plan(DataSource::Yahoo, timeframe)?;
     let interval = native(plan.base())?;
     if max == 0 || end_ms <= start_ms {
@@ -194,6 +197,45 @@ fn fetch_range(
         extended,
     )?;
     shape_range(response, plan, start, start_ms, end, max, extended)
+}
+
+/// Request from the beginning of the UTC day containing the requested start,
+/// so Yahoo sees the whole first exchange session instead of a partial
+/// arbitrary hourly request. Shape filters back to the exact requested range.
+fn hourly_request_bounds(start: i64, end: i64, now: i64) -> Option<(i64, i64)> {
+    if start >= end {
+        return None;
+    }
+    let horizon = Interval::Hour.max_window_seconds()? * 1_000;
+    let earliest = now.saturating_sub(horizon).saturating_add(1_000).max(0);
+    let start = start.max(0).div_euclid(DAY_MS) * DAY_MS;
+    let start = start.max(earliest);
+    let end = end.min(now);
+    if end.div_euclid(1_000) <= start.div_euclid(1_000) {
+        return None;
+    }
+    Some((start, end))
+}
+
+fn fetch_native_hourly(
+    symbol: &str,
+    start: i64,
+    end: i64,
+    max: usize,
+    now: i64,
+    extended: bool,
+) -> Result<Vec<Kline>, ProviderError> {
+    if max == 0 {
+        return Ok(Vec::new());
+    }
+    let Some((request_start, request_end)) = hourly_request_bounds(start, end, now) else {
+        return Ok(Vec::new());
+    };
+    let response = chart(&symbol.to_uppercase(), Interval::Hour, request_start / 1_000, request_end / 1_000, extended)?;
+    super::hourly::shape(
+        &response, start.max(request_start), request_end, extended, end >= now,
+        max.min(MAX_BARS),
+    )
 }
 
 fn shape_range(
@@ -333,6 +375,15 @@ mod tests {
             close,
             volume,
         }
+    }
+
+    #[test]
+    fn yahoo_native_hourly_request_bounds_pad_start_but_respect_retention() {
+        let now = 1_000 * DAY_MS;
+        assert_eq!(hourly_request_bounds(now - 3 * DAY_MS + 1_800_000, now - DAY_MS, now),
+            Some((now - 3 * DAY_MS, now - DAY_MS)));
+        assert_eq!(hourly_request_bounds(0, now, now), Some((now - 730 * DAY_MS + 1_000, now)));
+        assert!(hourly_request_bounds(0, now - 731 * DAY_MS, now).is_none());
     }
 
     #[test]

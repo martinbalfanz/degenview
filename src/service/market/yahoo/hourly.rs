@@ -1,5 +1,5 @@
-//! Candidate native hourly contract. Test-only until live period coverage,
-//! paging, Pine and quote-preview alignment are validated.
+//! Native US equity/ETF hourly candles. Vendor session metadata defines
+//! the exact open and end of each observed bar.
 use super::{Chart, ChartMeta, adapter::collect_sessions};
 use crate::model::{DataSource, Kline};
 use crate::model::market::yahoo_session::Session;

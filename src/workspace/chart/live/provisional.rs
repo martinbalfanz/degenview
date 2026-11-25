@@ -73,13 +73,29 @@ impl Provisional {
         }
     }
 
-    pub(super) fn observe(&mut self, tf: Timeframe, last: &Kline, quote: Option<Observation>) -> Option<Preview> {
+    #[cfg(test)]
+    fn observe(&mut self, tf: Timeframe, last: &Kline, quote: Option<Observation>) -> Option<Preview> {
+        self.observe_with_grid(tf, last, quote, false)
+    }
+
+    pub(super) fn observe_with_grid(&mut self, tf: Timeframe, last: &Kline, quote: Option<Observation>, native_hourly: bool) -> Option<Preview> {
         self.sync_rest(tf, last);
         let Some(quote) = quote else {
             self.sampled = None;
             return None;
         };
-        let bucket = bucket_start_ms(tf, quote.timestamp_ms);
+        // Native hours may begin at :30 and end after 30 minutes.
+        // Without the vendor's next period metadata, don't guess a new
+        // native slot. The separate price line can still show the quote.
+        let bucket = if native_hourly {
+            if !(last.open_time..=last.close_time).contains(&quote.timestamp_ms) {
+                self.sampled = None;
+                return None;
+            }
+            last.open_time
+        } else {
+            bucket_start_ms(tf, quote.timestamp_ms)
+        };
         let next = next_bucket_start_ms(tf, last.open_time);
         // The caller has already checked the quote's current trading session.
         // One observed newer bucket may follow a gap, but no intervening bars
@@ -174,6 +190,21 @@ mod tests {
         let gap = state.observe(tf, &bar(300_000), observe(200.0, 900_000)).unwrap();
         assert_eq!((gap.open_time, gap.open, gap.high, gap.low), (900_000, 200.0, 200.0, 200.0));
         assert!(state.observe(tf, &bar(300_000), observe(100.0, 600_000)).is_none());
+    }
+
+    #[test]
+    fn yahoo_native_hourly_preview_uses_actual_rest_interval() {
+        let mut state = Provisional::default();
+        let mut rest = bar(1_800_000);
+        rest.close_time = 5_399_999;
+        let quote = |timestamp_ms| Some(Observation { price: 110.0, timestamp_ms });
+        let preview = state.observe_with_grid(Timeframe::HOUR_1, &rest, quote(4_000_000), true).unwrap();
+        assert_eq!(preview.open_time, 1_800_000);
+        assert!(state.observe_with_grid(Timeframe::HOUR_1, &rest, quote(5_400_000), true).is_none());
+        let mut rest = bar(5_400_000);
+        rest.close_time = 7_199_999;
+        assert!(state.observe_with_grid(Timeframe::HOUR_1, &rest, quote(6_000_000), true).is_some());
+        assert!(state.observe_with_grid(Timeframe::HOUR_1, &rest, quote(7_200_000), true).is_none());
     }
 
     #[test]

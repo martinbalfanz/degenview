@@ -8,7 +8,6 @@ use crate::model::{DataSource, YahooDerivative};
 use crate::service::{ProviderError, net::http};
 
 mod adapter;
-#[cfg(test)]
 mod hourly;
 pub use adapter::YAHOO;
 use serde::Deserialize;
@@ -33,8 +32,6 @@ pub enum Interval {
     Minute,
     FiveMinutes,
     FifteenMinutes,
-    // Diagnostic only until the native bucket contract is validated.
-    #[cfg(test)]
     Hour,
     Day,
 }
@@ -45,7 +42,6 @@ impl Interval {
             Self::Minute => "1m",
             Self::FiveMinutes => "5m",
             Self::FifteenMinutes => "15m",
-            #[cfg(test)]
             Self::Hour => "60m",
             Self::Day => "1d",
         }
@@ -55,7 +51,6 @@ impl Interval {
         match self {
             Self::Minute => Some(7 * DAY),
             Self::FiveMinutes | Self::FifteenMinutes => Some(60 * DAY),
-            #[cfg(test)]
             Self::Hour => Some(730 * DAY),
             Self::Day => None,
         }

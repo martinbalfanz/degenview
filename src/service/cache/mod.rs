@@ -76,7 +76,8 @@ fn held() -> &'static Mutex<Held> {
 
 fn key(source: DataSource, symbol: &str, timeframe: Timeframe, extended: bool) -> String {
     let mode = if extended { ":extended" } else { "" };
-    format!("{source:?}:{}:{timeframe}{mode}", symbol.to_lowercase())
+    let grid = if crate::model::market::yahoo_session::native_hourly(source, symbol, timeframe) { ":native-hourly" } else { "" };
+    format!("{source:?}:{}:{timeframe}{grid}{mode}", symbol.to_lowercase())
 }
 
 /// Read already-fresh Yahoo intraday history without waiting for a provider or
@@ -597,6 +598,16 @@ mod tests {
         })
         .unwrap();
         assert_eq!(regular, cached);
+    }
+
+    #[test]
+    fn yahoo_native_hourly_cache_identity_is_distinct() {
+        let regular = key(DataSource::Yahoo, "NVDA", Timeframe::HOUR_1, false);
+        let extended = key(DataSource::Yahoo, "NVDA", Timeframe::HOUR_1, true);
+        assert!(regular.ends_with(":native-hourly"));
+        assert!(extended.ends_with(":native-hourly:extended"));
+        assert_ne!(regular, extended);
+        assert!(!key(DataSource::Yahoo, "SAP.DE", Timeframe::HOUR_1, false).contains("native-hourly"));
     }
 
     #[test]
