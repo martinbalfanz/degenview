@@ -261,16 +261,6 @@ impl From<Vec<Kline>> for LiveCandles {
 /// from finer candles, one more small request for those candles of the newest bucket (one bucket's
 /// worth, after the folded answer). A failed second request leaves `bars` empty: the candles are
 /// still good.
-pub fn fetch_klines_live(
-    source: DataSource,
-    symbol: &str,
-    timeframe: Timeframe,
-    limit: u32,
-) -> Result<LiveCandles, ProviderError> {
-    let extended = crate::model::market::yahoo_session::extended_candles(source, symbol, timeframe);
-    fetch_klines_live_with_session(source, symbol, timeframe, limit, extended)
-}
-
 pub(crate) fn fetch_klines_live_with_session(
     source: DataSource,
     symbol: &str,

@@ -9,7 +9,7 @@ fn symbols_and_searches_are_encoded_as_single_url_values() {
     assert!(path.ends_with("includePrePost=false"));
     assert!(chart_path("AAPL", Interval::Minute, 0, 8 * DAY, false).is_err());
     assert!(chart_path("AAPL", Interval::Minute, DAY, DAY, false).is_err());
-    assert!(chart_path("AAPL", Interval::Hour, 0, DAY, true)
+    assert!(chart_path("AAPL", Interval::FiveMinutes, 0, DAY, true)
         .unwrap()
         .ends_with("includePrePost=true"));
 }

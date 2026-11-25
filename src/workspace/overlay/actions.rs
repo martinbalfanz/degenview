@@ -494,6 +494,7 @@ mod tests {
             symbol: &str,
             _: Timeframe,
             _: u32,
+            _: bool,
         ) -> Result<LiveCandles, ProviderError> {
             if symbol == "BADUSDT" {
                 return Err(ProviderError::other("no such market"));
@@ -509,6 +510,7 @@ mod tests {
             _: &str,
             _: Timeframe,
             _: i64,
+            _: bool,
         ) -> Result<Vec<Kline>, ProviderError> {
             Ok(Vec::new())
         }
