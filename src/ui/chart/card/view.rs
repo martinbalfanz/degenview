@@ -189,7 +189,7 @@ fn preview_index(
     lead: f32,
     preview: crate::model::market::yahoo_preview::Preview,
 ) -> Option<usize> {
-    if !at_end {
+    if !at_end || !width.is_finite() || width <= 0.0 || !lead.is_finite() {
         return None;
     }
     let last = shown.last()?;

@@ -423,7 +423,7 @@ impl ChartCard {
             return;
         }
         let tint = theme::text_secondary().gamma_multiply(0.7);
-        let half = (slot_width * 0.4).clamp(1.0, 24.0);
+        let half = series::candle_half_width(slot_width) + 0.5;
         let stroke = Stroke::new(1.0, tint);
         let top = o.min(c);
         let bottom = o.max(c).max(top + 1.0);
