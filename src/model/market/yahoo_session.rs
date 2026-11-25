@@ -3,6 +3,7 @@
 //! is limited to US equity/ETF intraday candles.
 use crate::model::{DataSource, Timeframe};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Session {
@@ -12,7 +13,63 @@ pub enum Session {
 }
 
 pub const SETTINGS_KEY: &str = "market.yahoo.extended_hours";
-static ENABLED: OnceLock<bool> = OnceLock::new();
+// Low bit is the mode; remaining bits are the revision. One atomic read
+// observes both fields, so a worker cannot capture a torn session policy.
+static POLICY: OnceLock<AtomicU64> = OnceLock::new();
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PolicySnapshot {
+    pub(crate) extended: bool,
+    pub(crate) revision: u64,
+}
+
+impl PolicySnapshot {
+    fn decode(value: u64) -> Self {
+        Self {
+            extended: value & 1 != 0,
+            revision: value >> 1,
+        }
+    }
+
+    /// Irrelevant markets have one stable policy, independent of global changes.
+    pub(crate) fn effective(self, source: DataSource, symbol: &str, timeframe: Timeframe) -> Self {
+        if source.yahoo_stream_symbol(symbol) && timeframe.is_intraday() {
+            self
+        } else {
+            Self::default()
+        }
+    }
+}
+
+fn policy() -> &'static AtomicU64 {
+    POLICY.get_or_init(|| AtomicU64::new(u64::from(environment_override().unwrap_or(false))))
+}
+
+pub(crate) fn snapshot() -> PolicySnapshot {
+    PolicySnapshot::decode(policy().load(Ordering::Acquire))
+}
+
+// Kept test-only until the remaining runtime consumers can invalidate their
+// work. The settings path must not publish a live policy change yet.
+#[cfg(test)]
+fn transition(state: &AtomicU64, extended: bool) -> PolicySnapshot {
+    let value = state
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| {
+            let current = PolicySnapshot::decode(old);
+            if current.extended == extended {
+                None
+            } else {
+                Some((old & !1).wrapping_add(2) | u64::from(extended))
+            }
+        })
+        .unwrap_or_else(|unchanged| unchanged);
+    let current = PolicySnapshot::decode(value);
+    if current.extended == extended {
+        current
+    } else {
+        PolicySnapshot::decode((value & !1).wrapping_add(2) | u64::from(extended))
+    }
+}
 
 fn environment_override() -> Option<bool> {
     match std::env::var("DEGENVIEW_YAHOO_EXTENDED_HOURS").as_deref() {
@@ -24,11 +81,11 @@ fn environment_override() -> Option<bool> {
 
 /// Called before market workers and restored charts start.
 pub fn initialize(saved: bool) {
-    let _ = ENABLED.set(environment_override().unwrap_or(saved));
+    let _ = POLICY.set(AtomicU64::new(u64::from(environment_override().unwrap_or(saved))));
 }
 
 pub fn extended_enabled() -> bool {
-    *ENABLED.get_or_init(|| environment_override().unwrap_or(false))
+    snapshot().extended
 }
 
 pub fn overridden_by_environment() -> bool {
@@ -36,7 +93,7 @@ pub fn overridden_by_environment() -> bool {
 }
 
 pub fn extended_candles(source: DataSource, symbol: &str, timeframe: Timeframe) -> bool {
-    extended_enabled() && source.yahoo_stream_symbol(symbol) && timeframe.is_intraday()
+    snapshot().effective(source, symbol, timeframe).extended
 }
 
 /// Standard weekday US equity hours in New York. Holiday/early-close
@@ -70,6 +127,21 @@ mod tests {
     fn at(hour: i64, minute: i64) -> i64 {
         crate::pine::time::calendar::make(2026, 11, 25, hour, minute, 0, 0).unwrap()
     }
+    #[test]
+    fn yahoo_session_revision_detects_round_trips_and_ignores_noops() {
+        let state = AtomicU64::new(0);
+        assert_eq!(transition(&state, false), PolicySnapshot::default());
+        let extended = transition(&state, true);
+        assert_eq!(extended, PolicySnapshot { extended: true, revision: 1 });
+        assert_eq!(transition(&state, true), extended);
+        let regular = transition(&state, false);
+        assert_eq!(regular, PolicySnapshot { extended: false, revision: 2 });
+        assert_eq!(PolicySnapshot::decode(state.load(Ordering::Acquire)), regular);
+        assert_eq!(regular.effective(DataSource::Yahoo, "NVDA", Timeframe::HOUR_1), regular);
+        assert_eq!(regular.effective(DataSource::Yahoo, "NVDA", Timeframe::DAY_1), PolicySnapshot::default());
+        assert_eq!(regular.effective(DataSource::Binance, "BTCUSDT", Timeframe::HOUR_1), PolicySnapshot::default());
+    }
+
     #[test]
     fn wire_session_must_agree_with_new_york_window() {
         let pre = at(12, 0);

@@ -16,6 +16,7 @@ use crate::model::drawings::market::MarketDrawings;
 use crate::model::market;
 use crate::model::market::history::OlderHistory;
 use crate::model::market::live::{LiveFold, LiveMark};
+use crate::model::market::yahoo_session::PolicySnapshot;
 use crate::model::overlay::OverlayList;
 use crate::model::pine::bundled;
 use crate::model::portfolio::card::PortfolioCard;
@@ -51,7 +52,7 @@ pub(super) struct Chart {
     pub(super) older_inbox: Option<OlderRequest>,
     pub(super) fetch_generation: Arc<AtomicU64>,
     /// Effective session mode of the candles and any outstanding history requests.
-    yahoo_extended: bool,
+    yahoo_policy: PolicySnapshot,
     pub(super) chart: ChartCard,
     pub(super) scale_mode: PriceScaleMode,
     pub(super) indicators: IndicatorConfig,
@@ -147,7 +148,7 @@ impl Chart {
             older: OlderHistory::default(),
             older_inbox: None,
             fetch_generation: Arc::new(AtomicU64::new(0)),
-            yahoo_extended: false,
+            yahoo_policy: PolicySnapshot::default(),
             chart: ChartCard::default(),
             scale_mode: PriceScaleMode::default(),
             indicators: IndicatorConfig::default(),
@@ -347,15 +348,20 @@ impl Chart {
     /// Drop data and answers belonging to the previous effective session mode. The
     /// viewport, drawings, scripts and comparison configuration belong to the chart,
     /// not the history, and are preserved.
-    pub(super) fn prepare_yahoo_session(&mut self, timeframe: Timeframe, extended: bool) -> bool {
-        let mode = extended
-            && self.is_market()
-            && self.source.yahoo_stream_symbol(&self.symbol)
-            && timeframe.is_intraday();
-        if self.yahoo_extended == mode {
+    pub(super) fn prepare_yahoo_session(
+        &mut self,
+        timeframe: Timeframe,
+        policy: PolicySnapshot,
+    ) -> bool {
+        let mode = if self.is_market() {
+            policy.effective(self.source, &self.symbol, timeframe)
+        } else {
+            PolicySnapshot::default()
+        };
+        if self.yahoo_policy == mode {
             return false;
         }
-        self.yahoo_extended = mode;
+        self.yahoo_policy = mode;
         self.fetch_generation.fetch_add(1, Ordering::AcqRel);
         self.inbox = None;
         self.loading = false;
@@ -369,25 +375,25 @@ impl Chart {
     }
 
     pub(super) fn fetch(&mut self, timeframe: Timeframe, ctx: &egui::Context) {
-        self.fetch_with_session(timeframe, ctx, market::yahoo_session::extended_enabled());
+        self.fetch_with_session(timeframe, ctx, market::yahoo_session::snapshot());
     }
 
     pub(super) fn fetch_with_session(
         &mut self,
         timeframe: Timeframe,
         ctx: &egui::Context,
-        extended: bool,
+        policy: PolicySnapshot,
     ) {
         if !self.is_market() {
             return;
         }
-        self.prepare_yahoo_session(timeframe, extended);
+        self.prepare_yahoo_session(timeframe, policy);
         self.restore_yahoo_session_cache(timeframe);
         let (sender, receiver) = mpsc::channel();
         let symbol = self.symbol.clone();
         let source = self.source;
         let choices = self.pm_series.clone();
-        let extended = self.yahoo_extended;
+        let extended = self.yahoo_policy.extended;
         let repaint = ctx.clone();
 
         let generation = self.fetch_generation.fetch_add(1, Ordering::AcqRel) + 1;
@@ -439,7 +445,7 @@ impl Chart {
                 &self.symbol,
                 timeframe,
                 CANDLE_LIMIT,
-                self.yahoo_extended,
+                self.yahoo_policy.extended,
             )
         {
             self.candles = candles;
@@ -518,7 +524,7 @@ impl Chart {
         let (source, symbol) = (self.source, self.symbol.clone());
         let repaint = ctx.clone();
         let asked = symbol.clone();
-        let extended = self.yahoo_extended;
+        let extended = self.yahoo_policy.extended;
         service::work_queue::submit_for(source, move || {
             let page = service::fetch_klines_range_with_session(
                 source,
@@ -646,6 +652,20 @@ mod tests {
         chart
     }
 
+    fn session(extended: bool) -> PolicySnapshot {
+        PolicySnapshot { extended, revision: 0 }
+    }
+
+    #[test]
+    fn yahoo_chart_detects_missed_session_round_trip() {
+        let mut chart = Chart::blank(1, "NVDA", DataSource::Yahoo);
+        chart.candles = vec![candle(10, 1.0)];
+        let policy = PolicySnapshot { extended: false, revision: 2 };
+        assert!(chart.prepare_yahoo_session(Timeframe::HOUR_1, policy));
+        assert!(chart.candles.is_empty());
+        assert!(!chart.prepare_yahoo_session(Timeframe::HOUR_1, policy));
+    }
+
     #[test]
     fn yahoo_chart_restores_only_the_selected_warm_session() {
         let symbol = "WARMCHART";
@@ -668,7 +688,7 @@ mod tests {
 
         let mut chart = Chart::blank(1, symbol, DataSource::Yahoo);
         for (mode, expected) in [(true, &extended), (false, &regular)] {
-            assert!(chart.prepare_yahoo_session(timeframe, mode));
+            assert!(chart.prepare_yahoo_session(timeframe, session(mode)));
             // The production read never waits for the lock. Allow contention
             // from the other cache tests without doing any provider work.
             for _ in 0..1000 {
@@ -703,7 +723,7 @@ mod tests {
         });
         let generation = chart.fetch_generation.load(Ordering::Acquire);
 
-        assert!(chart.prepare_yahoo_session(Timeframe::HOUR_1, true));
+        assert!(chart.prepare_yahoo_session(Timeframe::HOUR_1, session(true)));
         assert!(chart.candles.is_empty());
         assert!(chart.inbox.is_none());
         assert!(chart.older_inbox.is_none());
@@ -718,9 +738,9 @@ mod tests {
         })).is_err());
         assert!(older_tx.send(Ok(vec![candle(1, 1.0)])).is_err());
 
-        assert!(!chart.prepare_yahoo_session(Timeframe::HOUR_1, true));
+        assert!(!chart.prepare_yahoo_session(Timeframe::HOUR_1, session(true)));
         chart.candles = vec![candle(30, 3.0)];
-        assert!(chart.prepare_yahoo_session(Timeframe::HOUR_1, false));
+        assert!(chart.prepare_yahoo_session(Timeframe::HOUR_1, session(false)));
         assert!(chart.candles.is_empty());
     }
 
@@ -733,7 +753,7 @@ mod tests {
         ] {
             let mut chart = Chart::blank(1, symbol, source);
             chart.candles = vec![candle(10, 1.0)];
-            assert!(!chart.prepare_yahoo_session(timeframe, true));
+            assert!(!chart.prepare_yahoo_session(timeframe, session(true)));
             assert_eq!(chart.candles.len(), 1);
         }
     }

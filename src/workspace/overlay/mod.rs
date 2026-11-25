@@ -22,6 +22,7 @@ use crate::i18n::tr;
 use crate::model::market;
 use crate::model::market::history::OlderHistory;
 use crate::model::market::live::{LiveFold, LiveMark};
+use crate::model::market::yahoo_session::PolicySnapshot;
 use crate::model::overlay::feed::{OverlayFeed, OverlayStatus};
 use crate::model::overlay::{OverlayId, OverlayList};
 use crate::model::{DataSource, InstrumentId, Kline, Timeframe};
@@ -152,7 +153,7 @@ struct Holder {
 
 struct Series {
     instrument: InstrumentId,
-    extended: bool,
+    policy: PolicySnapshot,
     holders: HashMap<u64, Holder>,
     candles: Arc<Vec<Kline>>,
     revision: u64,
@@ -174,7 +175,7 @@ impl Series {
     fn new(instrument: InstrumentId) -> Self {
         Self {
             instrument,
-            extended: false,
+            policy: PolicySnapshot::default(),
             holders: HashMap::new(),
             candles: Arc::new(Vec::new()),
             revision: 0,
@@ -399,7 +400,7 @@ impl OverlayHub {
             timeframe,
             ctx,
             now,
-            market::yahoo_session::extended_enabled(),
+            market::yahoo_session::snapshot(),
         );
     }
 
@@ -408,7 +409,7 @@ impl OverlayHub {
         timeframe: Timeframe,
         ctx: &egui::Context,
         now: Instant,
-        extended: bool,
+        policy: PolicySnapshot,
     ) {
         if self.timeframe != Some(timeframe) {
             if self.timeframe.is_some() {
@@ -421,17 +422,15 @@ impl OverlayHub {
         }
         let mut changed = false;
         for series in self.series.values_mut() {
-            let mode = extended
-                && series.instrument.source.yahoo_stream_symbol(&series.instrument.symbol)
-                && timeframe.is_intraday();
-            if series.extended != mode {
+            let mode = policy.effective(series.instrument.source, &series.instrument.symbol, timeframe);
+            if series.policy != mode {
                 series.reset();
-                series.extended = mode;
+                series.policy = mode;
                 if series.shown()
                     && let Some(candles) = self.backend.cached_session(
                         &series.instrument,
                         timeframe,
-                        mode,
+                        mode.extended,
                     )
                 {
                     series.set_candles(candles);
@@ -619,7 +618,7 @@ fn request_newest(
 ) {
     let (sender, receiver) = mpsc::channel();
     let instrument = series.instrument.clone();
-    let extended = series.extended;
+    let extended = series.policy.extended;
     let generation = series.generation.fetch_add(1, Ordering::AcqRel) + 1;
     let current: Weak<AtomicU64> = Arc::downgrade(&series.generation);
     let (worker, repaint) = (backend.clone(), ctx.clone());
@@ -658,7 +657,7 @@ fn request_older(
     };
     let (sender, receiver) = mpsc::channel();
     let instrument = series.instrument.clone();
-    let extended = series.extended;
+    let extended = series.policy.extended;
     let generation = series.generation.fetch_add(1, Ordering::AcqRel) + 1;
     let current = Arc::downgrade(&series.generation);
     let (worker, repaint) = (backend.clone(), ctx.clone());
