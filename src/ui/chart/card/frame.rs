@@ -530,6 +530,12 @@ impl ChartCard {
             && view.end == bars.len()
             && let Some(price) = self.yahoo_quote
         {
+            if chart_type == ChartType::Candles
+                && let Some(preview) = self.yahoo_preview
+                && candles.last().is_some_and(|last| last.open_time == preview.open_time)
+            {
+                self.draw_yahoo_preview(&clipped, plot, scale, x_for(shown.len() - 1), slot_width, preview);
+            }
             self.draw_yahoo_quote(&clipped, plot, scale, price, candles.last(), style);
         }
         let main_tag_y = candles.last().map(|last| scale.y(last.close));

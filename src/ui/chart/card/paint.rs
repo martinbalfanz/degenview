@@ -408,6 +408,32 @@ impl ChartCard {
         );
     }
 
+    /// An outlined candle silhouette shows observed prices without hiding
+    /// the authoritative REST body. It is not a trade-complete OHLC candle.
+    pub(super) fn draw_yahoo_preview(
+        &self,
+        painter: &egui::Painter,
+        plot: Rect,
+        scale: &PriceScale,
+        x: f32,
+        slot_width: f32,
+        preview: crate::model::market::yahoo_preview::Preview,
+    ) {
+        let (o, h, l, c) = (scale.y(preview.open), scale.y(preview.high), scale.y(preview.low), scale.y(preview.close));
+        if ![o, h, l, c, x].into_iter().all(f32::is_finite) || !plot.x_range().contains(x) {
+            return;
+        }
+        let tint = theme::text_secondary().gamma_multiply(0.85);
+        let half = (slot_width * 0.42).clamp(1.5, 24.0);
+        let stroke = Stroke::new(1.0, tint);
+        let top = o.min(c);
+        let bottom = o.max(c).max(top + 1.0);
+        painter.extend(Shape::dashed_line(&[Pos2::new(x, h), Pos2::new(x, top)], stroke, 2.0, 2.0));
+        painter.extend(Shape::dashed_line(&[Pos2::new(x, bottom), Pos2::new(x, l)], stroke, 2.0, 2.0));
+        let body = Rect::from_min_max(Pos2::new(x - half, top), Pos2::new(x + half, bottom));
+        painter.rect_stroke(body, 0.0, stroke, StrokeKind::Outside);
+    }
+
     /// Draw an indicative price separately from the authoritative candle-close tag.
     /// Deliberately does not affect scaling or any series used by scripts.
     pub(super) fn draw_yahoo_quote(

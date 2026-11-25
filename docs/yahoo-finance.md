@@ -65,7 +65,7 @@ Run the offline decoder/merge tests and, during a US regular session, `cargo tes
 
 Visible US Yahoo equity/ETF charts request quotes through the existing shared coordinator even when the watchlist sidebar is closed. The separate chart consumer uses a lease and releases on workspace drop; replay suspends demand and hides the marker. A recent regular-session quote (REST or streaming) is shown as a dashed indicative price line and label, without replacing the candle-close tag. No additional socket per chart. The marker is hidden on stale, invalid, older-than-last-bar, off-session or out-of-view quotes and on snapshots. It does not affect scaling, OHLCV, scripts, table feeds, MCP, alerts or backtests. The existing REST candle refresh remains authoritative. This is intentionally a view-only streaming increment rather than claiming that a sequence of indicative ticks is a complete per-candle trade feed.
 
-The next candle-specific milestone is a provisional forming-bar display reconciled against complete REST bars, without allocating cumulative session volume to an arbitrary timeframe. It must be tested against gaps, late data, corrections, replay and volume-based scripts.
+The initial provisional candle overlay outlines the existing intraday REST candle using observed price extrema and the latest indicative price. It is display-only, never creates a new bar, carries no volume, clears on market/timeframe change or invalid/out-of-bucket observations, and stays hidden in replay and snapshots. REST updates continue independently. Full sampled candle rollover and precise reconciliation remain pending. See [implementation roadmap](yahoo-finance-roadmap.md) for the handoff and remaining tasks.
 
 ## Deeper hourly history: design constraint
 

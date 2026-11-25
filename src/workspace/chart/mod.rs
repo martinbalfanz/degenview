@@ -66,6 +66,7 @@ pub(super) struct Chart {
     /// The newest bar the live feed delivered: a refresh begun before it keeps it.
     pub(super) live: Option<LiveMark>,
     /// The live klines of the bucket forming, when the timeframe is folded from finer ones.
+    pub(super) yahoo_preview: live::provisional::Provisional,
     pub(super) live_fold: LiveFold,
     /// Prediction markets: the choices charted together as lines, when there are several.
     pub(super) pm_series: Vec<PmSeries>,
@@ -153,6 +154,7 @@ impl Chart {
             last_paper_quote: None,
             last_data_ms: None,
             live: None,
+            yahoo_preview: Default::default(),
             live_fold: LiveFold::default(),
             pm_series: Vec::new(),
             overlays: OverlayList::new(),
@@ -402,6 +404,9 @@ impl Chart {
     pub(super) fn forget_live(&mut self) {
         self.live = None;
         self.live_fold.reset();
+        self.yahoo_preview.clear();
+        self.chart.set_yahoo_quote(None);
+        self.chart.set_yahoo_preview(None);
     }
 
     /// Whether the refresh loop should fetch again: a request is not out, the time is up, and the

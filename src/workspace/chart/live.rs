@@ -13,6 +13,9 @@ pub(in crate::workspace) fn yahoo_chart_quote_owner(workspace_id: u64) -> u64 {
     (1 << 59) + workspace_id
 }
 
+pub(in crate::workspace) mod provisional;
+use provisional::Observation;
+
 fn indicative_yahoo_price(quote: &crate::model::watchlist::quote::WatchlistQuote, last: &Kline, now: i64) -> Option<f64> {
     use crate::model::watchlist::quote::{Freshness, is_us_market_open};
     let timestamp = quote.timestamp_ms?;
@@ -45,16 +48,25 @@ impl ChartWorkspace {
 
         let now = crate::clock::now_ms();
         for chart in &mut self.charts {
-            let price = if active && chart.is_market() && chart.source.yahoo_stream_symbol(&chart.symbol) {
+            let observation = if active && chart.is_market() && chart.source.yahoo_stream_symbol(&chart.symbol) {
                 chart.candles.last().and_then(|last| {
                     let instrument = InstrumentId::new(chart.source, &chart.symbol);
                     let quote = self.quote_book.get(&instrument)?;
-                    indicative_yahoo_price(&quote, last, now)
+                    let price = indicative_yahoo_price(&quote, last, now)?;
+                    Some(Observation { price, timestamp_ms: quote.timestamp_ms? })
                 })
             } else {
                 None
             };
-            chart.chart.set_yahoo_quote(price);
+            // Preview only; never insert an observation into Chart::candles.
+            let preview = chart.candles.last().and_then(|last| {
+                chart.yahoo_preview.observe(self.timeframe, last, observation)
+            });
+            if observation.is_none() {
+                chart.yahoo_preview.clear();
+            }
+            chart.chart.set_yahoo_quote(observation.map(|quote| quote.price));
+            chart.chart.set_yahoo_preview(preview);
         }
     }
 
