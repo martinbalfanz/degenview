@@ -57,6 +57,7 @@ pub(super) trait OverlayBackend: Send + Sync + 'static {
         symbol: &str,
         timeframe: Timeframe,
         limit: u32,
+        extended: bool,
     ) -> Result<LiveCandles, ProviderError>;
     /// A page of candles ending before `end_ms`.
     fn page(
@@ -65,6 +66,7 @@ pub(super) trait OverlayBackend: Send + Sync + 'static {
         symbol: &str,
         timeframe: Timeframe,
         end_ms: i64,
+        extended: bool,
     ) -> Result<Vec<Kline>, ProviderError>;
 }
 
@@ -81,8 +83,9 @@ impl OverlayBackend for ServiceBackend {
         symbol: &str,
         timeframe: Timeframe,
         limit: u32,
+        extended: bool,
     ) -> Result<LiveCandles, ProviderError> {
-        service::fetch_klines_live(source, symbol, timeframe, limit)
+        service::fetch_klines_live_with_session(source, symbol, timeframe, limit, extended)
     }
 
     fn page(
@@ -91,8 +94,17 @@ impl OverlayBackend for ServiceBackend {
         symbol: &str,
         timeframe: Timeframe,
         end_ms: i64,
+        extended: bool,
     ) -> Result<Vec<Kline>, ProviderError> {
-        service::fetch_klines_range(source, symbol, timeframe, 0, end_ms, market::history::PAGE)
+        service::fetch_klines_range_with_session(
+            source,
+            symbol,
+            timeframe,
+            0,
+            end_ms,
+            market::history::PAGE,
+            extended,
+        )
     }
 }
 
@@ -113,6 +125,7 @@ struct Holder {
 
 struct Series {
     instrument: InstrumentId,
+    extended: bool,
     holders: HashMap<u64, Holder>,
     candles: Arc<Vec<Kline>>,
     revision: u64,
@@ -134,6 +147,7 @@ impl Series {
     fn new(instrument: InstrumentId) -> Self {
         Self {
             instrument,
+            extended: false,
             holders: HashMap::new(),
             candles: Arc::new(Vec::new()),
             revision: 0,
@@ -354,6 +368,21 @@ impl OverlayHub {
 
     /// Drains answers, then starts what is due within the in-flight budget.
     pub(super) fn poll(&mut self, timeframe: Timeframe, ctx: &egui::Context, now: Instant) {
+        self.poll_with_session(
+            timeframe,
+            ctx,
+            now,
+            market::yahoo_session::extended_enabled(),
+        );
+    }
+
+    fn poll_with_session(
+        &mut self,
+        timeframe: Timeframe,
+        ctx: &egui::Context,
+        now: Instant,
+        extended: bool,
+    ) {
         if self.timeframe != Some(timeframe) {
             if self.timeframe.is_some() {
                 for series in self.series.values_mut() {
@@ -365,6 +394,14 @@ impl OverlayHub {
         }
         let mut changed = false;
         for series in self.series.values_mut() {
+            let mode = extended
+                && series.instrument.source.yahoo_stream_symbol(&series.instrument.symbol)
+                && timeframe.is_intraday();
+            if series.extended != mode {
+                series.reset();
+                series.extended = mode;
+                changed = true;
+            }
             changed |= receive_fetch(series, timeframe, now);
             changed |= receive_older(series, now);
         }
@@ -545,6 +582,7 @@ fn request_newest(
 ) {
     let (sender, receiver) = mpsc::channel();
     let instrument = series.instrument.clone();
+    let extended = series.extended;
     let generation = series.generation.fetch_add(1, Ordering::AcqRel) + 1;
     let current: Weak<AtomicU64> = Arc::downgrade(&series.generation);
     let (worker, repaint) = (backend.clone(), ctx.clone());
@@ -562,6 +600,7 @@ fn request_newest(
                 &instrument.symbol,
                 timeframe,
                 CANDLE_LIMIT,
+                extended,
             );
             let _ = sender.send(result);
             repaint.request_repaint();
@@ -582,11 +621,26 @@ fn request_older(
     };
     let (sender, receiver) = mpsc::channel();
     let instrument = series.instrument.clone();
+    let extended = series.extended;
+    let generation = series.generation.fetch_add(1, Ordering::AcqRel) + 1;
+    let current = Arc::downgrade(&series.generation);
     let (worker, repaint) = (backend.clone(), ctx.clone());
     backend.submit(
         instrument.source,
         Box::new(move || {
-            let page = worker.page(instrument.source, &instrument.symbol, timeframe, end);
+            if !current
+                .upgrade()
+                .is_some_and(|state| state.load(Ordering::Acquire) == generation)
+            {
+                return;
+            }
+            let page = worker.page(
+                instrument.source,
+                &instrument.symbol,
+                timeframe,
+                end,
+                extended,
+            );
             let _ = sender.send(page);
             repaint.request_repaint();
         }),

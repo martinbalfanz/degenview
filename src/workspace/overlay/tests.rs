@@ -11,6 +11,7 @@ const HOUR: i64 = 3_600_000;
 struct Fake {
     jobs: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
     calls: Mutex<Vec<String>>,
+    sessions: Mutex<Vec<bool>>,
     answers: Mutex<HashMap<String, Result<Vec<Kline>, ProviderError>>>,
     pages: Mutex<HashMap<String, Vec<Kline>>>,
 }
@@ -50,7 +51,9 @@ impl OverlayBackend for Fake {
         symbol: &str,
         _: Timeframe,
         _: u32,
+        extended: bool,
     ) -> Result<LiveCandles, ProviderError> {
+        self.sessions.lock().unwrap().push(extended);
         self.calls.lock().unwrap().push(format!("klines {symbol}"));
         self.answers
             .lock()
@@ -67,7 +70,9 @@ impl OverlayBackend for Fake {
         symbol: &str,
         _: Timeframe,
         end: i64,
+        extended: bool,
     ) -> Result<Vec<Kline>, ProviderError> {
+        self.sessions.lock().unwrap().push(extended);
         self.calls
             .lock()
             .unwrap()
@@ -647,4 +652,37 @@ fn a_live_kline_of_a_finer_length_is_folded_into_each_holders_candles() {
     let forming = eth.candles.last().unwrap();
     assert_eq!(forming.open_time, 12 * HOUR);
     assert_eq!((forming.close, forming.volume), (7.0, 6.0));
+}
+
+#[test]
+fn yahoo_overlay_session_change_discards_old_answers_and_queued_jobs() {
+    let (mut hub, fake) = hub();
+    let now = Instant::now();
+    let ctx = egui::Context::default();
+    let yahoo = InstrumentId::new(DataSource::Yahoo, "NVDA");
+    let mut list = OverlayList::new();
+    list.add(&market("BTCUSDT"), yahoo.clone(), None);
+    list.add(&market("BTCUSDT"), market("ETHUSDT"), None);
+    hub.sync_chart(1, &list, Some(10 * HOUR));
+
+    // Both regular answers have arrived but have not yet been polled.
+    hub.poll_with_session(Timeframe::HOUR_1, &ctx, now, false);
+    fake.run_jobs();
+    hub.poll_with_session(Timeframe::HOUR_1, &ctx, now, true);
+    assert!(hub.feed(&yahoo).unwrap().candles.is_empty());
+    assert_eq!(hub.feed(&market("ETHUSDT")).unwrap().candles.len(), 2);
+    assert_eq!(fake.pending(), 1);
+
+    // Switch back before the queued extended request starts.
+    hub.poll_with_session(Timeframe::HOUR_1, &ctx, now, false);
+    fake.run_jobs();
+    assert_eq!(*fake.sessions.lock().unwrap(), [false, false, false]);
+    hub.poll_with_session(Timeframe::HOUR_1, &ctx, now, false);
+    assert_eq!(hub.feed(&yahoo).unwrap().status, OverlayStatus::Ready);
+
+    hub.poll_with_session(Timeframe::HOUR_1, &ctx, now, true);
+    fake.run_jobs();
+    hub.poll_with_session(Timeframe::HOUR_1, &ctx, now, true);
+    assert_eq!(*fake.sessions.lock().unwrap(), [false, false, false, true]);
+    assert_eq!(hub.feed(&yahoo).unwrap().status, OverlayStatus::Ready);
 }
