@@ -252,6 +252,7 @@ impl Session {
         };
         let intrabars = self.serve_intrabars(
             &candles,
+            &request.symbol,
             request.interval,
             &request.expression,
             site,
@@ -365,7 +366,8 @@ impl Session {
             && let Some(candles) =
                 self.lower_timeframe_candles(values.get("symbol"), seconds, recent_bars)
         {
-            return self.serve_intrabars(&candles, seconds, &expression, site, context);
+            let symbol = values.get("symbol").and_then(RuntimeValue::text_value).unwrap_or_default();
+            return self.serve_intrabars(&candles, symbol, seconds, &expression, site, context);
         }
         // The chart's own timeframe: each chart bar is its own single intrabar.
         let mut intrabars: Option<RuntimeValue> = None;
@@ -900,9 +902,13 @@ impl Session {
     }
 
     /// The expression on every intrabar that opens inside the chart bar.
+    /// Incompatible native-hour/UTC grids require full containment: an
+    /// hourly candle crossing a chart boundary cannot be split into trades.
+    #[allow(clippy::too_many_arguments)]
     fn serve_intrabars(
         &mut self,
         candles: &[Kline],
+        symbol: &str,
         interval: f64,
         expression: &Expression,
         site: usize,
@@ -917,6 +923,10 @@ impl Session {
             return Ok(result);
         }
         let end = self.bar_end(&bar);
+        let ticker = if symbol.is_empty() { &self.symbol.ticker_id } else { symbol };
+        let native_target = native_hourly_ticker(ticker, interval);
+        let native_chart = native_hourly_ticker(&self.symbol.ticker_id, self.bar_seconds);
+        let require_containment = native_chart || native_target;
         let mut low = 0usize;
         let mut high = candles.len();
         while low < high {
@@ -928,7 +938,7 @@ impl Session {
             }
         }
         let request = SecurityRequest {
-            symbol: String::new(),
+            symbol: symbol.to_owned(),
             interval,
             expression: expression.clone(),
             lookahead_on: false,
@@ -939,6 +949,11 @@ impl Session {
         let mut results = Vec::new();
         let mut index = low;
         while index < candles.len() && candles[index].open_time < end {
+            if require_containment && ChartBar::end_of(&candles[index], interval, native_target) > end {
+                // Later prices from this candle are not available at the
+                // chart close. Do not expose them or commit their state.
+                break;
+            }
             results.push(self.evaluate_higher_timeframe(
                 &mut state,
                 &candles[index],
@@ -1466,6 +1481,45 @@ mod tests {
             );
         }
         session.output()
+    }
+
+    #[test]
+    fn yahoo_native_hourly_lower_tf_never_exposes_cross_boundary_candle() {
+        let mut provider = TestProvider::default();
+        let hour = |start, price| Kline {
+            close_time: start + 3_600_000 - 1,
+            ..bar(start, price)
+        };
+        provider.candles.insert(
+            SecurityKey {
+                symbol: "YAHOO:NVDA".to_owned(),
+                interval: 3600.0,
+                recent_bars: 0,
+            },
+            vec![
+                hour(1_800_000, 10.0),
+                hour(5_400_000, 99.0), // Ends after first 2h chart bar.
+                hour(9_000_000, 20.0),
+                Kline { close_time: 14_399_999, ..hour(12_600_000, 30.0) },
+            ],
+        );
+        let chart = [
+            Kline { close_time: 7_199_999, ..bar(0, 1.0) },
+            Kline { close_time: 14_399_999, ..bar(7_200_000, 2.0) },
+        ];
+        let program = compiler::compile(
+            "//@version=6\nindicator(\"T\")\nplot(array.sum(request.security_lower_tf(\"YAHOO:NVDA\", \"60\", close)))",
+            Limits::default(),
+            &NoLibraries,
+        );
+        let mut session = Session::new(
+            program, HashMap::new(), Limits::default(), None,
+            SymbolInfo { ticker_id: "YAHOO:NVDA".into(), ..SymbolInfo::default() },
+            Some(Box::new(provider)), None,
+        );
+        session.configured_bar_seconds = Some(7200.0);
+        assert!(session.load_history(&chart, false, None).is_ok());
+        assert_eq!(session.output().plots[0].values, [Some(10.0), Some(50.0)]);
     }
 
     #[test]
