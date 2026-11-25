@@ -341,6 +341,22 @@ impl ChartCard {
         let synthetic_bars = data.synthetic();
         let previous_close = view.start.checked_sub(1).map(|index| bars[index].close);
         let shown = &bars[view.start..view.end];
+        // Only the series painter and the last-price tag see this copy.
+        // Indicators, volume, projections, Pine, replay and snapshots keep REST data.
+        let preview = self.yahoo_preview.filter(|preview| {
+            decor.indicative_quote && !decor.replay_active
+                && data.source.yahoo_stream_symbol(data.symbol)
+                && chart_type == ChartType::Candles
+                && view.end == bars.len()
+                && shown.last().is_some_and(|last| last.open_time == preview.open_time)
+        });
+        let painted = preview.map(|preview| {
+            let mut painted = shown.to_vec();
+            if let Some(last) = painted.last_mut() {
+                preview.apply_to(last);
+            }
+            painted
+        });
         let shown_synthetic = synthetic_bars.map(|all| &all[view.start..view.end]);
         let (scale, slot_width, lead) = (&view.scale, view.slot_width, view.lead);
         let x_for =
@@ -465,7 +481,7 @@ impl ChartCard {
             series::paint(&SeriesFrame {
                 painter: &clipped,
                 plot,
-                bars: shown,
+                bars: painted.as_deref().unwrap_or(shown),
                 synthetic: shown_synthetic,
                 box_size: data.constructed.and_then(|built| built.series.size),
                 previous_close,
@@ -478,6 +494,9 @@ impl ChartCard {
                 recolor: bar_color,
                 price_format: self.appearance.price_format(),
             });
+            if let Some(preview) = preview {
+                self.draw_yahoo_preview_border(&clipped, plot, scale, x_for(shown.len() - 1), slot_width, preview);
+            }
         }
 
         let drawn_indicators = data.indicators.drawn();
@@ -518,12 +537,20 @@ impl ChartCard {
                 target_at(&targets, pointer).cloned()
             });
 
+        let tag_candles = preview.map(|preview| {
+            // The tag needs only the last two candles, including previous close for its colour.
+            let mut tail = candles[candles.len().saturating_sub(2)..].to_vec();
+            if let Some(last) = tail.last_mut() {
+                preview.apply_to(last);
+            }
+            tail
+        });
         self.draw_last_price(
             &main_painter,
             plot,
             rect,
             scale,
-            candles,
+            tag_candles.as_deref().unwrap_or(candles),
             shown_synthetic.and_then(|_| bars.last()),
             style,
         );
@@ -533,15 +560,11 @@ impl ChartCard {
             && view.end == bars.len()
             && let Some(price) = self.yahoo_quote
         {
-            if chart_type == ChartType::Candles
-                && let Some(preview) = self.yahoo_preview
-                && candles.last().is_some_and(|last| last.open_time == preview.open_time)
-            {
-                self.draw_yahoo_preview(&clipped, plot, scale, x_for(shown.len() - 1), slot_width, preview);
+            if preview.is_none() {
+                self.draw_yahoo_quote(&clipped, plot, scale, price, candles.last());
             }
-            self.draw_yahoo_quote(&clipped, plot, scale, price, candles.last());
         }
-        let main_tag_y = candles.last().map(|last| scale.y(last.close));
+        let main_tag_y = preview.map(|bar| scale.y(bar.close)).or_else(|| candles.last().map(|last| scale.y(last.close)));
         self.paint_overlay_tags(
             &main_painter,
             &clipped,

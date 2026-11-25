@@ -408,6 +408,7 @@ impl Engine {
             .known
             .keys()
             .chain(self.yahoo_rest.keys())
+            .chain(self.yahoo_extended.keys())
             .chain(self.received.keys())
             .chain(self.rejected.keys())
             .chain(self.stream_subscribed_at.keys())
@@ -628,7 +629,6 @@ impl Engine {
                         && self.yahoo_rest.get(key).is_none_or(|previous| quote.timestamp_ms >= previous.timestamp_ms)
                     {
                         self.yahoo_rest.insert(key.clone(), *quote);
-
                     }
                     // A slow snapshot must not rewind a more recent stream tick.
                     if let Some(last) = self.known.get(key)

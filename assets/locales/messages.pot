@@ -40,7 +40,7 @@ msgstr ""
 msgid "Futures"
 msgstr ""
 
-msgid "Include US stock and ETF premarket and after-hours data on intraday charts and watchlist quotes. Changes apply without restarting."
+msgid "Include US stock and ETF premarket and after-hours data on intraday charts. Changes apply without restarting."
 msgstr ""
 
 msgid "May be delayed"
@@ -20675,4 +20675,10 @@ msgstr ""
 #: src/ui/window/tab_link_menu/mod.rs
 msgctxt "what a link syncs, in a list"
 msgid "time"
+msgstr ""
+
+msgid "Premarket"
+msgstr ""
+
+msgid "After hours"
 msgstr ""

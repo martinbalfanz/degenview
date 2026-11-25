@@ -408,9 +408,8 @@ impl ChartCard {
         );
     }
 
-    /// An outlined candle silhouette shows observed prices without hiding
-    /// the authoritative REST body. It is not a trade-complete OHLC candle.
-    pub(super) fn draw_yahoo_preview(
+    /// Subtle dashed border on the normal forming candle, indicating sampled prices.
+    pub(super) fn draw_yahoo_preview_border(
         &self,
         painter: &egui::Painter,
         plot: Rect,
@@ -423,15 +422,14 @@ impl ChartCard {
         if ![o, h, l, c, x].into_iter().all(f32::is_finite) || !plot.x_range().contains(x) {
             return;
         }
-        let tint = theme::text_secondary().gamma_multiply(0.85);
-        let half = (slot_width * 0.42).clamp(1.5, 24.0);
+        let tint = theme::text_secondary().gamma_multiply(0.7);
+        let half = (slot_width * 0.4).clamp(1.0, 24.0);
         let stroke = Stroke::new(1.0, tint);
         let top = o.min(c);
         let bottom = o.max(c).max(top + 1.0);
-        painter.extend(Shape::dashed_line(&[Pos2::new(x, h), Pos2::new(x, top)], stroke, 2.0, 2.0));
-        painter.extend(Shape::dashed_line(&[Pos2::new(x, bottom), Pos2::new(x, l)], stroke, 2.0, 2.0));
         let body = Rect::from_min_max(Pos2::new(x - half, top), Pos2::new(x + half, bottom));
-        painter.rect_stroke(body, 0.0, stroke, StrokeKind::Outside);
+        let corners = [body.left_top(), body.right_top(), body.right_bottom(), body.left_bottom(), body.left_top()];
+        painter.extend(Shape::dashed_line(&corners, stroke, 2.0, 2.0));
     }
 
     /// Draw an indicative price separately from the authoritative candle-close tag.
