@@ -98,3 +98,16 @@ fn only_us_equity_quotes_qualify_for_the_initial_adapter() {
     assert!(quotes[0].is_us_equity());
     assert!(!quotes[1].is_us_equity());
 }
+
+#[test]
+fn spark_uses_valid_previous_close_and_does_not_invent_volume() {
+    let body = r#"{"spark":{"error":null,"result":[
+        {"symbol":"NVDA","response":[{"meta":{"regularMarketPrice":150.0,"chartPreviousClose":0.0,"previousClose":145.0,"regularMarketVolume":123456,"regularMarketTime":1700000000}}]},
+        {"symbol":"AAPL","response":[{"meta":{"regularMarketPrice":100.0,"regularMarketVolume":-1,"regularMarketTime":0}}]}
+    ]}}"#;
+    let quotes = parse_quotes(body).unwrap();
+    assert_eq!(quotes[0].previous_close, Some(145.0));
+    assert_eq!(quotes[0].regular_market_volume, Some(123456.0));
+    assert_eq!(quotes[1].regular_market_volume, None);
+    assert_eq!(quotes[1].timestamp, None);
+}

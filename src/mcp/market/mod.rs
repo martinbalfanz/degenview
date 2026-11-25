@@ -209,6 +209,7 @@ fn volume_unit(kind: VolumeKind) -> &'static str {
 fn status(freshness: Freshness) -> &'static str {
     match freshness {
         Freshness::Live => "live",
+        Freshness::Delayed => "delayed",
         Freshness::Stale => "stale",
         Freshness::MarketClosed => "market_closed",
         Freshness::Unavailable => "unavailable",

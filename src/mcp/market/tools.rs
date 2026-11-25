@@ -402,7 +402,7 @@ fn resolve_markets(refs: &[MarketRef]) -> Result<Vec<WatchlistInstrument>, CallT
 /// A quote that will not change by waiting longer: priced, or refused with a reason.
 fn is_settled(quote: Option<&WatchlistQuote>) -> bool {
     quote.is_some_and(|quote| {
-        quote.freshness.is_current()
+        quote.freshness.is_recent()
             || quote.freshness == Freshness::Unsupported
             || quote.note.is_some()
     })

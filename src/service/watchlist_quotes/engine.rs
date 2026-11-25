@@ -333,7 +333,7 @@ impl Engine {
                         && self
                             .known
                             .get(key)
-                            .is_none_or(|quote| !quote.freshness.is_current())
+                            .is_none_or(|quote| !quote.freshness.is_recent())
                 });
                 AlertProviderHealth {
                     source,
@@ -691,7 +691,7 @@ impl Engine {
     pub fn age_quotes(&mut self, now: i64) {
         let mut updates = HashMap::new();
         for (key, quote) in &self.known {
-            if !quote.freshness.is_current() {
+            if !quote.freshness.is_recent() {
                 continue;
             }
             let (Some(confirmed), Some(source)) = (self.received.get(key), self.source_of(key))

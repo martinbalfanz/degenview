@@ -6,12 +6,12 @@ The client deliberately keeps original UTC timestamps, optional volume, exchange
 
 ## Remaining integration work
 
-The draft registers Yahoo for US equities and ETFs, symbol search, historical charts and REST watchlist quotes. It folds longer candles from native 1/5/15-minute and daily bars on DegenView's UTC grid (not Wickline's session-open grid). Quotes are explicitly not certified live. Paper trading and price alerts are disabled for Yahoo. Before proposing upstream:
-- Validate interval planning, older-history bounds, UTC folds versus session-anchored candles and official close prints against live data. Verify adjustment basis with split and dividend fixtures.
+The draft registers Yahoo for US equities and ETFs, symbol search, historical charts and REST watchlist quotes. It folds longer candles from native 1/5/15-minute and daily bars on DegenView's UTC grid (not Wickline's session-open grid). Successful quote refreshes are marked 'May be delayed' (never certified live), and become stale on failed or expired refreshes. A shared 30-second cooldown follows HTTP 429. Historical ranges exclude observations at or beyond the exclusive end, and closing prints cannot update an earlier candle across a gap. The cache refetches the whole series when a refreshed tail revises a completed Yahoo candle's prices; this reduces the risk of mixed adjustment bases after corporate actions. Paper trading and price alerts are disabled for Yahoo. Before proposing upstream:
+- Validate interval planning, older-history bounds (1m: 7 days; 5m/15m: 60 days by conservative policy, including folded hourly charts), UTC folds versus session-anchored candles and official close prints against live data. Yahoo's ordinary chart OHLC (not dividend-adjusted adjclose) is used, like Wickline. Verify split adjustment and dividend behavior against live fixtures.
 - Verify picker, quote freshness, caching, source mark, persistence and translations on supported platforms. International markets require instrument-level currency, asset type and session metadata.
 - Finish auditing Pine alerts, replay, session statistics, portfolio, source-specific assumptions and MCP. Yahoo is not yet exposed as an MCP input provider.
 - Add streaming only after validating the vendor's protobuf feed, disconnect behavior, exchange delays and correct cumulative volume handling. Keep REST polling fallback.
-- Run cargo fmt, check, test and clippy and manually verify AAPL, BRK-B, BAS.DE, ^GSPC, EURUSD=X, GC=F, holidays, daylight-saving transitions, range limits and network failures.
+- The initial integration builds on the fork owner's machine and NVDA 5m opened successfully. Run cargo fmt, test and clippy on subsequent changes; manually verify AAPL, BRK-B, holidays, daylight-saving transitions, range limits and network failures. International symbols and non-equity asset classes remain out of scope.
 
 ## Attribution
 

@@ -125,7 +125,7 @@ fn detail_tile(
 fn freshness_color(freshness: Freshness) -> Color32 {
     match freshness {
         Freshness::Live => theme::UP,
-        Freshness::Stale => theme::ORANGE,
+        Freshness::Delayed | Freshness::Stale => theme::ORANGE,
         Freshness::MarketClosed => theme::text_secondary(),
         Freshness::Unavailable | Freshness::Unsupported => theme::text_tertiary(),
     }

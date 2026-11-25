@@ -85,13 +85,17 @@ fn native_bars(chart: Chart, timeframe: Timeframe) -> Result<Vec<Kline>, Provide
             && bar.high == bar.low
             && bar.high == bar.close
             && let Some((session_start, _)) = sessions.iter().find(|(_, end)| *end == bar.timestamp)
-            && let Some(last) = out.last_mut()
-            && last.open_time >= session_start.saturating_mul(1_000)
-            && last.open_time < timestamp
         {
-            last.high = last.high.max(bar.close);
-            last.low = last.low.min(bar.close);
-            last.close = bar.close;
+            // A closing print cannot fill a missing interval or change a much
+            // earlier candle. Without the final interval, discard the print.
+            if let Some(last) = out.last_mut()
+                && last.open_time >= session_start.saturating_mul(1_000)
+                && last.open_time == bucket::bucket_start_ms(timeframe, timestamp - 1)
+            {
+                last.high = last.high.max(bar.close);
+                last.low = last.low.min(bar.close);
+                last.close = bar.close;
+            }
             continue;
         }
         if let Some(last) = out.last_mut()
@@ -149,9 +153,29 @@ fn fetch_range(
         end_seconds,
         false,
     )?;
+    shape_range(response, plan, start, start_ms, end, max)
+}
+
+fn shape_range(
+    mut response: Chart,
+    plan: bucket::FoldPlan,
+    requested_start: i64,
+    start: i64,
+    end: i64,
+    max: usize,
+) -> Result<Vec<Kline>, ProviderError> {
+    // Yahoo sometimes includes a forming/latest observation. A historical
+    // range must never incorporate a trade from at or after its exclusive end.
+    response.bars.retain(|bar| {
+        bar.timestamp.checked_mul(1_000).is_some_and(|ms| {
+            ms >= requested_start && ms < end
+        })
+    });
     let bars = native_bars(response, plan.base())?;
-    let mut candles = plan.shape_since(bars, usize::MAX, start, max.min(MAX_BARS));
-    candles.retain(|bar| bar.open_time >= start_ms && bar.open_time < end_ms);
+    let mut candles = plan.shape_since(bars, usize::MAX, requested_start, usize::MAX);
+    candles.retain(|bar| bar.open_time >= start && bar.open_time < end);
+    let skip = candles.len().saturating_sub(max.min(MAX_BARS));
+    candles.drain(..skip);
     Ok(candles)
 }
 
@@ -164,7 +188,7 @@ impl MarketSource for Yahoo {
     ) -> Result<Vec<Kline>, ProviderError> {
         let now = crate::clock::now_ms();
         let count = i64::from(limit).min(MAX_BARS as i64).saturating_add(1);
-        let factor = if timeframe.is_intraday() { 6 } else { 2 };
+        let factor = if timeframe.is_intraday() { 8 } else { 2 };
         let span = timeframe.nominal_ms().saturating_mul(count).saturating_mul(factor);
         let start = now.saturating_sub(span.max(7 * DAY_MS)).max(0);
         let bars = fetch_range(symbol, timeframe, start, now, limit as usize, now)?;
@@ -255,6 +279,37 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].close, 11.0);
         assert_eq!(result[0].volume, 100.0);
+    }
+
+    #[test]
+    fn a_close_print_cannot_update_an_earlier_bar_across_a_gap() {
+        let mut chart = stock(vec![
+            bar(60, 10.0, Some(100.0)),
+            bar(180, 11.0, Some(0.0)),
+        ]);
+        chart.meta.current_trading_period = Some(serde_json::json!({
+            "regular": {"start": 60, "end": 180}
+        }));
+        let result = native_bars(chart, Timeframe::MINUTE_1).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].close, 10.0);
+    }
+
+    #[test]
+    fn historical_fold_does_not_ingest_a_latest_point_outside_the_window() {
+        let timeframe = Timeframe::parse("5m").unwrap();
+        let plan = bucket::FoldPlan::new(timeframe, &[Timeframe::MINUTE_1]).unwrap();
+        let chart = stock(vec![
+            bar(300, 10.0, Some(100.0)),
+            bar(360, 11.0, Some(150.0)),
+            bar(420, 12.0, Some(200.0)),
+            bar(480, 99.0, Some(900.0)),
+            bar(540, 100.0, Some(900.0)),
+        ]);
+        let result = shape_range(chart, plan, 300_000, 300_000, 480_000, 1).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].close, 12.0);
+        assert_eq!(result[0].volume, 450.0);
     }
 
     #[test]

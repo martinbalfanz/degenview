@@ -10,6 +10,8 @@ mod adapter;
 pub use adapter::YAHOO;
 use serde::Deserialize;
 use std::collections::HashSet;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 const HOSTS: [&str; 2] = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
 const HEADERS: &[(&str, &str)] = &[
@@ -17,6 +19,8 @@ const HEADERS: &[(&str, &str)] = &[
     ("Accept", "application/json"),
 ];
 const DAY: i64 = 86_400;
+const RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(30);
+static RATE_LIMITED_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 pub const QUOTE_BATCH_SIZE: usize = 20;
 
 /// Native Yahoo chart intervals, not a claim about which DegenView timeframes
@@ -106,6 +110,7 @@ pub struct Quote {
     pub symbol: String,
     pub price: f64,
     pub previous_close: Option<f64>,
+    pub regular_market_volume: Option<f64>,
     pub timestamp: Option<i64>,
     pub currency: Option<String>,
     pub instrument_type: Option<String>,
@@ -185,12 +190,25 @@ fn encode(value: &str) -> String {
 /// Wickline uses two Yahoo hosts. Do not retry a rate limit against the second
 /// hostname: a 429 is exposed to DegenView's existing backoff machinery.
 fn get(path: &str) -> Result<String, ProviderError> {
-    let first = format!("https://{}{path}", HOSTS[0]);
-    match http::get_text(&first, HEADERS, http::Retry::Never) {
+    let get_host = |host| {
+        // Share the cooldown across chart, search and watchlist workers.
+        // Do not hold a lock over I/O or sleep on a worker.
+        if crate::lock::lock(&RATE_LIMITED_UNTIL)
+            .is_some_and(|until| Instant::now() < until)
+        {
+            return Err(http::Error::Status(429));
+        }
+        let url = format!("https://{host}{path}");
+        let result = http::get_text(&url, HEADERS, http::Retry::Never);
+        if matches!(&result, Err(http::Error::Status(429))) {
+            *crate::lock::lock(&RATE_LIMITED_UNTIL) = Some(Instant::now() + RATE_LIMIT_COOLDOWN);
+        }
+        result
+    };
+    match get_host(HOSTS[0]) {
         Ok(body) => Ok(body),
         Err(error) if error.is_transient() && error != http::Error::Status(429) => {
-            let second = format!("https://{}{path}", HOSTS[1]);
-            http::get_text(&second, HEADERS, http::Retry::Never).map_err(Into::into)
+            get_host(HOSTS[1]).map_err(Into::into)
         }
         Err(error) => Err(error.into()),
     }
@@ -409,6 +427,7 @@ struct SparkRow {
 #[serde(rename_all = "camelCase")]
 struct SparkMeta {
     regular_market_price: Option<f64>,
+    regular_market_volume: Option<f64>,
     chart_previous_close: Option<f64>,
     previous_close: Option<f64>,
     regular_market_time: Option<i64>,
@@ -456,9 +475,12 @@ fn parse_quotes(body: &str) -> Result<Vec<Quote>, ProviderError> {
                 price,
                 previous_close: meta
                     .chart_previous_close
-                    .or(meta.previous_close)
-                    .filter(|price| price.is_finite() && *price != 0.0),
-                timestamp: meta.regular_market_time,
+                    .filter(|price| price.is_finite() && *price > 0.0)
+                    .or_else(|| meta.previous_close.filter(|price| price.is_finite() && *price > 0.0)),
+                regular_market_volume: meta
+                    .regular_market_volume
+                    .filter(|volume| volume.is_finite() && *volume >= 0.0),
+                timestamp: meta.regular_market_time.filter(|time| *time > 0),
                 currency: meta.currency,
                 instrument_type: meta.instrument_type,
                 exchange_timezone_name: meta.exchange_timezone_name,

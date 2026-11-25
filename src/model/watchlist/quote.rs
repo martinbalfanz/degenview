@@ -44,6 +44,8 @@ impl ChangeBasis {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Freshness {
     Live,
+    /// A recently received quote from a feed that may be delayed.
+    Delayed,
     Stale,
     MarketClosed,
     Unavailable,
@@ -54,6 +56,7 @@ impl Freshness {
     pub fn label(self) -> &'static str {
         match self {
             Self::Live => tr!("Live"),
+            Self::Delayed => tr!("May be delayed"),
             Self::Stale => tr!("Stale"),
             Self::MarketClosed => tr!("Market closed"),
             Self::Unavailable => tr!("No quote"),
@@ -61,9 +64,14 @@ impl Freshness {
         }
     }
 
-    /// Whether the price can be shown as current.
+    /// Whether the price can be treated as current for live-price consumers.
     pub fn is_current(self) -> bool {
         matches!(self, Self::Live | Self::MarketClosed)
+    }
+
+    /// Whether the provider has recently answered, even if the feed may be delayed.
+    pub fn is_recent(self) -> bool {
+        self.is_current() || self == Self::Delayed
     }
 }
 
@@ -213,8 +221,11 @@ pub fn maximum_age_secs(source: DataSource) -> i64 {
 /// `Stale` once the last refresh is older than the source's window; a stock outside US
 /// hours reads `MarketClosed` (its last price is the close, still current); else `Live`.
 pub fn evaluate_freshness(source: DataSource, received_at_ms: i64, now_ms: i64) -> Freshness {
-    if source == DataSource::Yahoo || now_ms - received_at_ms > maximum_age_secs(source) * 1_000 {
+    if now_ms - received_at_ms > maximum_age_secs(source) * 1_000 {
         return Freshness::Stale;
+    }
+    if source == DataSource::Yahoo {
+        return Freshness::Delayed;
     }
     if source == DataSource::Alpaca && !is_us_market_open(now_ms) {
         return Freshness::MarketClosed;
@@ -555,5 +566,32 @@ mod tests {
         assert_eq!(compact_number(2_000_000_000_000.0), "2T");
         assert_eq!(compact_number(999.0), "999");
         assert_eq!(compact_number(0.5), "0.5");
+    }
+}
+
+#[cfg(test)]
+mod yahoo_tests {
+    use super::*;
+
+    #[test]
+    fn a_recent_yahoo_quote_is_not_live_and_ages_to_stale() {
+        let now = 1_760_918_400_000;
+        let quote = WatchlistQuote::from_source(
+            DataSource::Yahoo,
+            &SourceQuote {
+                price: 110.0,
+                previous_day_price: Some(100.0),
+                timestamp_ms: Some(now - 900_000),
+                ..SourceQuote::default()
+            },
+            now,
+        );
+        assert_eq!(quote.freshness, Freshness::Delayed);
+        assert!(quote.freshness.is_recent());
+        assert!(!quote.freshness.is_current());
+        assert_eq!(quote.timestamp_ms, Some(now - 900_000));
+        assert_eq!(quote.change_basis, Some(ChangeBasis::PreviousClose));
+        assert_eq!(evaluate_freshness(DataSource::Yahoo, now, now + 120_000), Freshness::Delayed);
+        assert_eq!(evaluate_freshness(DataSource::Yahoo, now, now + 120_001), Freshness::Stale);
     }
 }
