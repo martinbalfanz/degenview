@@ -48,7 +48,7 @@ fn native(timeframe: Timeframe) -> Result<Interval, ProviderError> {
     }
 }
 
-fn collect_sessions(value: &serde_json::Value, sessions: &mut Vec<(i64, i64)>) {
+pub(super) fn collect_sessions(value: &serde_json::Value, sessions: &mut Vec<(i64, i64)>) {
     if let Some(items) = value.as_array() {
         for item in items {
             collect_sessions(item, sessions);

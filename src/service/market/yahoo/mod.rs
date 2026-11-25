@@ -8,6 +8,8 @@ use crate::model::{DataSource, YahooDerivative};
 use crate::service::{ProviderError, net::http};
 
 mod adapter;
+#[cfg(test)]
+mod hourly;
 pub use adapter::YAHOO;
 use serde::Deserialize;
 use std::collections::HashSet;

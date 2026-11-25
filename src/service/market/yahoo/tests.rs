@@ -301,3 +301,40 @@ fn live_yahoo_native_hourly_regular_history() {
 fn live_yahoo_native_hourly_extended_history() {
     probe_native_hourly(true);
 }
+
+#[test]
+#[ignore = "network; native hourly historical period coverage and candidate shaping"]
+fn live_yahoo_native_hourly_shape_contract() {
+    let today = (crate::clock::now_ms() / 1000).div_euclid(DAY) * DAY;
+    // A single seven-day old and recent request per mode, plus the recent
+    // short-day window around US Thanksgiving 2025. No new market subscription.
+    let short_day = crate::pine::time::calendar::make(2025, 11, 28, 0, 0, 0, 0).unwrap() / 1000;
+    let mut failures = Vec::new();
+    for extended in [false, true] {
+        for (name, start, end) in [
+            ("old", today - 700 * DAY, today - 693 * DAY),
+            ("recent", today - 7 * DAY, today),
+            ("short-day", short_day, short_day + 2 * DAY),
+        ] {
+            let raw = chart("NVDA", Interval::Hour, start, end, extended).expect("native hourly chart");
+            println!("{name} extended={extended} raw={} period metadata={:?}", raw.bars.len(), raw.meta.trading_periods);
+            match hourly::shape(&raw, start * 1000, end * 1000, extended, false, 10_000) {
+                Ok(bars) => {
+                    let mut spans = std::collections::BTreeMap::new();
+                    for bar in &bars {
+                        *spans.entry((bar.close_time + 1 - bar.open_time) / 60_000).or_insert(0usize) += 1;
+                    }
+                    println!("  shaped={} duration minutes={spans:?} first={:?} last={:?}", bars.len(), bars.first(), bars.last());
+                    if bars.is_empty() {
+                        failures.push(format!("{name} extended={extended}: empty shaped history"));
+                    }
+                }
+                Err(error) => {
+                    println!("  shape error: {error:?}");
+                    failures.push(format!("{name} extended={extended}: {error:?}"));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "native hourly contract failures: {failures:?}");
+}
