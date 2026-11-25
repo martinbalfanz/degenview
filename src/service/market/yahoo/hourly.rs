@@ -65,7 +65,7 @@ pub(super) fn shape(
     }
     let periods = periods(&chart.meta, extended);
     let mut out: Vec<Kline> = Vec::new();
-    for bar in &chart.bars {
+    for (index, bar) in chart.bars.iter().enumerate() {
         let Some(open_time) = bar.timestamp.checked_mul(1_000) else {
             continue;
         };
@@ -97,12 +97,32 @@ pub(super) fn shape(
                 return Err(ProviderError::data(format!("No Yahoo hourly trading period for {}", bar.timestamp)));
             }
         };
+        if (bar.timestamp - period.start).rem_euclid(HOUR) != 0 {
+            // Yahoo can append a current-price observation at a trade
+            // timestamp rather than a candle's native open. Only a trailing
+            // live row identified by regularMarketTime (or a recent flat,
+            // zero/absent-volume quote in an extended session) qualifies.
+            // Do not fold its ambiguous OHLCV into authoritative candles.
+            let latest_regular = period.session == Session::Regular
+                && chart.meta.regular_market_time == Some(bar.timestamp);
+            let recent_extended_quote = extended && period.session != Session::Regular
+                && end_ms.saturating_sub(open_time) <= 30 * 60_000
+                && bar.open == bar.close && bar.high == bar.close && bar.low == bar.close
+                && bar.volume.is_none_or(|volume| volume == 0.0);
+            if include_forming && index + 1 == chart.bars.len()
+                && (latest_regular || recent_extended_quote)
+            {
+                continue;
+            }
+            return Err(ProviderError::data(format!(
+                "Unexpected Yahoo hourly anchor at {} (session={:?}, period={}..{}, last_row={}, regularMarketTime={:?}, OHLCV={:?})",
+                bar.timestamp, period.session, period.start, period.end,
+                index + 1 == chart.bars.len(), chart.meta.regular_market_time, bar,
+            )));
+        }
         let Some(volume) = bar.volume else {
             return Err(ProviderError::data(format!("Missing native hourly volume field at {}", bar.timestamp)));
         };
-        if (bar.timestamp - period.start).rem_euclid(HOUR) != 0 {
-            return Err(ProviderError::data(format!("Unexpected Yahoo hourly anchor at {}", bar.timestamp)));
-        }
         let end = (bar.timestamp + HOUR).min(period.end) * 1_000;
         if !include_forming && end > end_ms {
             continue;
@@ -160,6 +180,42 @@ mod tests {
         assert_eq!(page, bars[2..3]);
         assert_eq!(shape(&chart, 1_800_000, 6_000_000, true, false, 100).unwrap(), bars[1..2]);
         assert_eq!(shape(&chart, 1_800_000, 6_000_000, true, true, 100).unwrap(), bars[1..3]);
+    }
+
+    #[test]
+    fn yahoo_native_hourly_ignores_only_identifiable_trailing_live_observations() {
+        let mut chart = fixture();
+        chart.bars.pop();
+        chart.bars.remove(0);
+        let expected = shape(&chart, 0, 6_800_000, false, true, 100).unwrap();
+        let observation = Bar {
+            timestamp: 6_744, open: 115.0, high: 116.0, low: 114.0,
+            close: 115.5, volume: Some(500.0),
+        };
+        chart.meta.regular_market_time = Some(observation.timestamp);
+        chart.bars.push(observation.clone());
+        // Ignore the latest print entirely: no synthetic OHLC, volume, or
+        // new anchor, even when its payload looks like a candle.
+        assert_eq!(shape(&chart, 0, 6_800_000, false, true, 100).unwrap(), expected);
+        assert_eq!(shape(&chart, 0, 6_800_000, true, true, 100).unwrap(), expected);
+        assert!(shape(&chart, 0, 7_200_000, false, false, 100).is_err());
+        chart.meta.regular_market_time = None;
+        assert!(shape(&chart, 0, 6_800_000, false, true, 100).is_err());
+        chart.meta.regular_market_time = Some(observation.timestamp);
+        chart.bars.push(Bar { timestamp: 7200, ..observation });
+        assert!(shape(&chart, 0, 8_000_000, true, true, 100).is_err());
+    }
+
+    #[test]
+    fn yahoo_native_hourly_ignores_recent_flat_extended_quote_but_not_unknown_ohlcv() {
+        let mut chart = fixture();
+        let expected = shape(&chart, 0, 8_000_000, true, true, 100).unwrap();
+        chart.bars.push(Bar { timestamp: 7900, open: 115.0, high: 115.0, low: 115.0, close: 115.0, volume: None });
+        assert_eq!(shape(&chart, 0, 8_000_000, true, true, 100).unwrap(), expected);
+        assert!(shape(&chart, 0, 10_000_000, true, true, 100).is_err());
+        assert!(shape(&chart, 0, 8_000_000, true, false, 100).is_err());
+        chart.bars.last_mut().unwrap().volume = Some(10.0);
+        assert!(shape(&chart, 0, 8_000_000, true, true, 100).is_err());
     }
 
     #[test]
