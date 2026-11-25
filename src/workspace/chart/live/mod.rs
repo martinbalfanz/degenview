@@ -51,6 +51,18 @@ impl ChartWorkspace {
 
         let now = crate::clock::now_ms();
         for chart in &mut self.charts {
+            let levels = if active && chart.is_market() && chart.source.yahoo_stream_symbol(&chart.symbol) {
+                let instrument = InstrumentId::new(chart.source, &chart.symbol);
+                crate::model::market::yahoo_preview::SessionLevels::from_quotes(
+                    self.quote_book.get(&instrument).as_ref(),
+                    self.quote_book.get_extended(&instrument).as_ref(),
+                    now,
+                    self.timeframe.is_intraday(),
+                )
+            } else {
+                Default::default()
+            };
+            chart.chart.set_yahoo_session_levels(levels);
             let observation = if active && chart.is_market() && chart.source.yahoo_stream_symbol(&chart.symbol) {
                 chart.candles.last().and_then(|last| {
                     let instrument = InstrumentId::new(chart.source, &chart.symbol);

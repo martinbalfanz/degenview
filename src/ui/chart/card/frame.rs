@@ -48,6 +48,7 @@ pub(super) struct FrameData<'a> {
     pub indicators: &'a IndicatorConfig,
     /// Render-only, absent from replay and snapshots.
     pub preview: Option<crate::model::market::yahoo_preview::Preview>,
+    pub session_levels: crate::model::market::yahoo_preview::SessionLevels,
 }
 
 impl FrameData<'_> {
@@ -260,6 +261,7 @@ impl ChartCard {
                 scale_mode,
                 chart_type,
                 data.preview,
+                data.session_levels,
             ) {
                 let scale = &view.scale;
                 let budget =
@@ -275,7 +277,8 @@ impl ChartCard {
                     .into_iter()
                     .chain(bars.last().map(|bar| bar.close))
                     .chain(candles.last().map(|bar| bar.close))
-                    .chain(data.preview.map(|bar| bar.close));
+                    .chain(data.preview.map(|bar| bar.close))
+                    .chain(data.session_levels.prices());
                 for price in tagged {
                     widest = widest.max(measure(&scale.tag_label(format, price)));
                 }
@@ -562,26 +565,35 @@ impl ChartCard {
             }
             Some(tail)
         });
-        self.draw_last_price(
-            &main_painter,
-            plot,
-            rect,
-            scale,
-            tag_candles.as_deref().unwrap_or(candles),
-            shown_synthetic.and_then(|_| bars.last()),
-            style,
-        );
-        if decor.indicative_quote && !decor.replay_active
-            && data.source == DataSource::Yahoo
+        let levels = if decor.indicative_quote && !decor.replay_active && view.end == bars.len() {
+            data.session_levels
+        } else {
+            Default::default()
+        };
+        let regular = levels.regular;
+        if regular.is_none() {
+            self.draw_last_price(
+                &main_painter,
+                plot,
+                rect,
+                scale,
+                tag_candles.as_deref().unwrap_or(candles),
+                shown_synthetic.and_then(|_| bars.last()),
+                style,
+            );
+        }
+        let main_tag_y = regular.map(|quote| scale.y(quote.price))
+            .or_else(|| preview.map(|(bar, _)| scale.y(bar.close)))
+            .or_else(|| candles.last().map(|last| scale.y(last.close)));
+        if levels.extended.is_none() && regular.is_none()
+            && decor.indicative_quote && !decor.replay_active
             && data.source.yahoo_stream_symbol(data.symbol)
             && view.end == bars.len()
+            && preview.is_none()
             && let Some(price) = self.yahoo_quote
         {
-            if preview.is_none() {
-                self.draw_yahoo_quote(&clipped, plot, scale, price, candles.last());
-            }
+            self.draw_yahoo_quote(&clipped, plot, scale, price, candles.last());
         }
-        let main_tag_y = preview.map(|(bar, _)| scale.y(bar.close)).or_else(|| candles.last().map(|last| scale.y(last.close)));
         self.paint_overlay_tags(
             &main_painter,
             &clipped,
@@ -592,6 +604,7 @@ impl ChartCard {
             style,
             main_tag_y,
         );
+        self.draw_yahoo_session_levels(&main_painter, plot, rect, scale, style, levels, regular.is_none().then_some(main_tag_y).flatten());
         self.draw_time_axis(painter, rect, shown, &ticks, &x_for, plot.right(), style);
         // The tags of the lines at a price or a time sit on the axes, which the drawings'
         // clipped painter cannot reach.

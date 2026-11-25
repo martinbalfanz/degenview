@@ -478,6 +478,7 @@ impl Chart {
         self.live_fold.reset();
         self.yahoo_preview.clear();
         self.chart.set_yahoo_quote(None);
+        self.chart.set_yahoo_session_levels(Default::default());
         self.chart.set_yahoo_preview(None);
     }
 

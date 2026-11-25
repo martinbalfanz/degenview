@@ -185,6 +185,7 @@ impl ChartCard {
             data.scale_mode,
             data.chart_type,
             data.preview,
+            data.session_levels,
         );
         let regions = navigation::Regions {
             plot,
@@ -471,6 +472,7 @@ impl ChartCard {
             outputs: &outputs,
             indicators,
             preview: self.yahoo_preview.filter(|_| !replay.active && !line && source.yahoo_stream_symbol(symbol) && chart_type == ChartType::Candles),
+            session_levels: if !replay.active && source.yahoo_stream_symbol(symbol) { self.yahoo_session_levels } else { Default::default() },
         };
         let layout = self.frame_layout(
             &data,
@@ -495,6 +497,7 @@ impl ChartCard {
             scale_mode,
             chart_type,
             data.preview,
+            data.session_levels,
         ) else {
             return pointer;
         };

@@ -236,9 +236,10 @@ impl ChartCard {
         mode: PriceScaleMode,
         chart_type: ChartType,
     ) -> Option<View> {
-        self.view_with_preview(framing, candles, (plot, top_inset), mode, chart_type, None)
+        self.view_with_preview(framing, candles, (plot, top_inset), mode, chart_type, None, Default::default())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn view_with_preview(
         &self,
         framing: Framing,
@@ -247,6 +248,7 @@ impl ChartCard {
         mode: PriceScaleMode,
         chart_type: ChartType,
         preview: Option<crate::model::market::yahoo_preview::Preview>,
+        levels: crate::model::market::yahoo_preview::SessionLevels,
     ) -> Option<View> {
         let window = self.window(framing, candles.len());
         let (start, end) = (window.start, window.end);
@@ -260,6 +262,12 @@ impl ChartCard {
         {
             low = low.min(preview.low);
             high = high.max(preview.high);
+        }
+        if end == candles.len() {
+            for price in levels.prices() {
+                low = low.min(price);
+                high = high.max(price);
+            }
         }
         if low > high {
             (low, high) = (0.0, 1.0);

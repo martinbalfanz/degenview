@@ -408,6 +408,77 @@ impl ChartCard {
         );
     }
 
+    /// Regular and extended session prices are independent of the candle
+    /// series. The label sits against the right axis, on its own dotted line.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn draw_yahoo_session_levels(
+        &self,
+        painter: &egui::Painter,
+        plot: Rect,
+        rect: Rect,
+        scale: &PriceScale,
+        style: &CanvasStyle,
+        levels: crate::model::market::yahoo_preview::SessionLevels,
+        fallback_y: Option<f32>,
+    ) {
+        use crate::model::market::yahoo_session::Session;
+        let half = style.tag_half_height();
+        if plot.height() < 2.0 * half || plot.width() <= 0.0 {
+            return;
+        }
+        let regular = levels.regular.map(|quote| {
+            let color = match quote.change {
+                Some(change) if change > 0.0 => self.bullish_color(),
+                Some(change) if change < 0.0 => self.bearish_color(),
+                _ => theme::text_secondary(),
+            };
+            (quote.price, if quote.at_close { crate::i18n::tr!("Close") } else { crate::i18n::tr!("Regular") }, color)
+        });
+        let extended = levels.extended.map(|(session, price)| {
+            let label = match session {
+                Session::Pre => crate::i18n::tr!("Premarket"),
+                Session::Post => crate::i18n::tr!("After hours"),
+                Session::Regular => crate::i18n::tr!("Regular"),
+            };
+            (price, label, theme::pick(Color32::from_rgb(148, 91, 221), Color32::from_rgb(111, 61, 183)))
+        });
+        let regular_y = regular.map(|(price, _, _)| scale.y(price))
+            .filter(|y| y.is_finite() && plot.y_range().contains(*y));
+        let mut occupied = regular_y.or(fallback_y);
+        for (price, label, color) in regular.into_iter().chain(extended) {
+            let y = scale.y(price);
+            if !y.is_finite() || !plot.y_range().contains(y) {
+                continue;
+            }
+            let mut tag_y = y.clamp(plot.top() + half, plot.bottom() - half);
+            if let Some(other) = occupied {
+                // Reserve the first tag; when near it, move the second tag
+                // rather than moving the price line itself.
+                if regular_y != Some(y) || label != regular.map_or("", |(_, label, _)| label) {
+                    tag_y = yahoo_secondary_tag_y(tag_y, other, half, plot);
+                }
+            }
+            occupied = Some(tag_y);
+            canvas::horizontal(painter, (plot.left(), plot.right()), y, canvas::LineStyle {
+                stroke: Stroke::new(1.0, color),
+                dash: crate::model::chart::kind::LineDash::Dotted,
+            });
+            let tag = Rect::from_min_max(Pos2::new(plot.right() + 3.0, tag_y - half), Pos2::new(rect.right() - 3.0, tag_y + half));
+            painter.rect_filled(tag, 3.0, color);
+            price_text::paint(painter, tag.center(), Align2::CENTER_CENTER, &scale.tag_label(self.appearance.price_format(), price), style.price_font(), Color32::WHITE);
+            let galley = painter.layout_no_wrap(label.to_owned(), style.price_font(), Color32::WHITE);
+            let left = (plot.right() - galley.size().x - 10.0).max(plot.left());
+            let label_rect = Rect::from_min_max(Pos2::new(left, tag_y - half), Pos2::new(plot.right(), tag_y + half));
+            if label_rect.width() >= galley.size().x {
+                painter.rect_filled(label_rect, 3.0, color);
+                painter.galley(label_rect.center() - galley.size() / 2.0, galley, Color32::WHITE);
+            }
+            if (tag_y - y).abs() > 0.5 {
+                painter.line_segment([Pos2::new(plot.right(), y), Pos2::new(plot.right(), tag_y)], Stroke::new(1.0, color));
+            }
+        }
+    }
+
     /// Subtle dashed border on the normal forming candle, indicating sampled prices.
     pub(super) fn draw_yahoo_preview_border(
         &self,
@@ -522,4 +593,30 @@ const TREND_FLIP_LABEL_GAP: f32 = 2.0;
 pub(super) fn contained_center(center: f32, lower: f32, upper: f32, length: f32) -> Option<f32> {
     let (low, high) = (lower + length / 2.0, upper - length / 2.0);
     (length >= 0.0 && low <= high).then(|| center.clamp(low, high))
+}
+
+fn yahoo_secondary_tag_y(y: f32, fixed: f32, half: f32, plot: Rect) -> f32 {
+    let gap = 2.0 * half + 1.0;
+    let (top, bottom) = (plot.top() + half, plot.bottom() - half);
+    if (y - fixed).abs() >= gap {
+        return y;
+    }
+    let above = fixed - gap;
+    let below = fixed + gap;
+    if y < fixed && above >= top || below > bottom && above >= top {
+        above
+    } else if below <= bottom {
+        below
+    } else {
+        y
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn yahoo_session_tags_separate_nearby_prices() {
+    let plot = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 100.0));
+    assert_eq!(yahoo_secondary_tag_y(50.0, 50.0, 8.0, plot), 67.0);
+    assert_eq!(yahoo_secondary_tag_y(89.0, 90.0, 8.0, plot), 73.0);
+    assert_eq!(yahoo_secondary_tag_y(20.0, 60.0, 8.0, plot), 20.0);
 }

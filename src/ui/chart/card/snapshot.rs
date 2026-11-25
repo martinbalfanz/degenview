@@ -264,6 +264,7 @@ impl ChartCard {
             outputs: &outputs,
             indicators: &indicators,
             preview: None,
+            session_levels: Default::default(),
         };
         let layout = self.frame_layout(&data, framing, rect, 0.0, painter, &style);
         let view = self
