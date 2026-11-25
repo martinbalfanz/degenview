@@ -7,6 +7,79 @@ use crate::service::ProviderError;
 
 const HOUR: i64 = 3_600;
 
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
+
+/// Only the current vendor schedule is needed for a live preview. This small
+/// cache does not perform I/O and is never populated by historical paging.
+struct CurrentPeriods {
+    requested_at: i64,
+    received: Instant,
+    periods: Vec<Period>,
+}
+
+static CURRENT: LazyLock<Mutex<HashMap<String, CurrentPeriods>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+const MAX_CURRENT: usize = 128;
+const CURRENT_TTL: Duration = Duration::from_secs(15 * 60);
+
+pub(super) fn remember_current(meta: &ChartMeta, requested_at: i64) {
+    let mut current = Vec::new();
+    if let Some(value) = &meta.current_trading_period {
+        for (session, name) in [(Session::Pre, "pre"), (Session::Regular, "regular"), (Session::Post, "post")] {
+            let mut ranges = Vec::new();
+            if let Some(value) = value.get(name) {
+                collect_sessions(value, &mut ranges);
+            }
+            ranges.sort_unstable();
+            ranges.dedup();
+            current.extend(ranges.into_iter().map(|(start, end)| Period { session, start, end }));
+        }
+    }
+    let key = meta.symbol.to_ascii_uppercase();
+    let mut held = crate::lock::lock(&CURRENT);
+    if held.get(&key).is_some_and(|entry| entry.requested_at > requested_at) {
+        return;
+    }
+    if current.is_empty() {
+        held.remove(&key);
+        return;
+    }
+    if held.len() >= MAX_CURRENT && !held.contains_key(&key)
+        && let Some(oldest) = held.iter().min_by_key(|(_, entry)| entry.received).map(|(key, _)| key.clone())
+    {
+        held.remove(&oldest);
+    }
+    held.insert(key, CurrentPeriods { requested_at, received: Instant::now(), periods: current });
+}
+
+/// Exact open and exclusive end for the observed quote. Both the quote and
+/// the current time must be in the same vendor period; no standard-hours
+/// fallback, no stale schedule and no guessing the next exchange session.
+pub(crate) fn current_hour_bucket(symbol: &str, timestamp: i64, now: i64, extended: bool) -> Option<(i64, i64)> {
+    let held = CURRENT.try_lock().ok()?;
+    let entry = held.get(&symbol.to_ascii_uppercase())?;
+    if entry.received.elapsed() > CURRENT_TTL {
+        return None;
+    }
+    observed_bucket(&entry.periods, timestamp, now, extended)
+}
+
+fn observed_bucket(periods: &[Period], timestamp: i64, now: i64, extended: bool) -> Option<(i64, i64)> {
+    let period = period_at(periods, timestamp.div_euclid(1_000)).ok()??;
+    if period_at(periods, now.div_euclid(1_000)).ok()?? != period
+        || (!extended && period.session != Session::Regular)
+        // The watchlist currently classifies by standard NY hours. Do not
+        // use its price on a shortened day when those classifications disagree.
+        || crate::model::market::yahoo_session::session_at(timestamp) != Some(period.session)
+    {
+        return None;
+    }
+    let start = period.start + (timestamp.div_euclid(1_000) - period.start).div_euclid(HOUR) * HOUR;
+    Some((start * 1_000, (start + HOUR).min(period.end) * 1_000))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Period {
     session: Session,
@@ -167,6 +240,22 @@ mod tests {
             },
             bars: vec![bar(0, 0.0), bar(start, 400.0), bar(5400, 200.0), bar(7200, 0.0)],
         }
+    }
+
+    #[test]
+    fn yahoo_native_hourly_observation_uses_current_vendor_period_and_short_end() {
+        let at = |h, m| crate::pine::time::calendar::make(2026, 11, 25, h, m, 0, 0).unwrap();
+        let period = Period { session: Session::Regular, start: at(14, 30) / 1_000, end: at(21, 0) / 1_000 };
+        let post = Period { session: Session::Post, start: at(21, 0) / 1_000, end: at(23, 0) / 1_000 };
+        let periods = [period, post];
+        assert_eq!(observed_bucket(&periods, at(20, 45), at(20, 46), false), Some((at(20, 30), at(21, 0))));
+        assert_eq!(observed_bucket(&periods, at(21, 5), at(21, 6), true), Some((at(21, 0), at(22, 0))));
+        assert!(observed_bucket(&periods, at(21, 5), at(21, 6), false).is_none());
+        assert!(observed_bucket(&periods, at(20, 59), at(21, 0), true).is_none());
+        assert!(observed_bucket(&periods, at(23, 1), at(23, 2), true).is_none());
+        let shortened = [Period { end: at(18, 0) / 1_000, ..period }];
+        assert_eq!(observed_bucket(&shortened, at(17, 45), at(17, 46), false), Some((at(17, 30), at(18, 0))));
+        assert!(observed_bucket(&shortened, at(18, 5), at(18, 6), true).is_none());
     }
 
     #[test]

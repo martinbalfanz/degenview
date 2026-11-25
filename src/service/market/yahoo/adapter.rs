@@ -233,10 +233,14 @@ fn fetch_native_hourly(
         return Ok(Vec::new());
     };
     let response = chart(&symbol.to_uppercase(), Interval::Hour, request_start / 1_000, request_end / 1_000, extended)?;
-    super::hourly::shape(
+    let bars = super::hourly::shape(
         &response, start.max(request_start), request_end, extended, end >= now,
         max.min(MAX_BARS),
-    )
+    )?;
+    if end >= now {
+        super::hourly::remember_current(&response.meta, now);
+    }
+    Ok(bars)
 }
 
 fn shape_range(

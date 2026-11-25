@@ -360,7 +360,7 @@ impl ChartCard {
                 // zero volume is never passed to volume/readout/data consumers.
                 painted.push(Kline {
                     open_time: preview.open_time,
-                    close_time: preview.open_time,
+                    close_time: preview.end_time.saturating_sub(1),
                     open: preview.open,
                     high: preview.high,
                     low: preview.low,
@@ -425,7 +425,7 @@ impl ChartCard {
             && crate::model::market::yahoo_session::extended_candles(data.source, data.symbol, tf)
         {
             self.draw_yahoo_session_background(
-                &main_painter, plot, shown, slot_width, lead, tf,
+                &main_painter, plot, shown, slot_width, lead,
                 preview.and_then(|(bar, index)| (index == shown.len()).then_some(bar)),
             );
         }
@@ -724,7 +724,7 @@ impl ChartCard {
         }
         if let Some((crosshair, x)) = decor.crosshair.and_then(|crosshair| {
             let slots = view.geometry(plot, bars.len()).slots();
-            let axis = view.hover_axis(bars, plot, data.preview, self.timeframe);
+            let axis = view.hover_axis(bars, plot, data.preview);
             self.crosshair_column(crosshair, decor.chart_id, data.source, plot, slots, axis)
                 .map(|x| (crosshair, x))
         }) {

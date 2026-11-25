@@ -10,6 +10,7 @@ use crate::service::{ProviderError, net::http};
 mod adapter;
 mod hourly;
 pub use adapter::YAHOO;
+pub(crate) use hourly::current_hour_bucket;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::sync::Mutex;

@@ -15,7 +15,6 @@ impl ChartCard {
         shown: &[Kline],
         slot_width: f32,
         lead: f32,
-        timeframe: Timeframe,
         tail: Option<crate::model::market::yahoo_preview::Preview>,
     ) {
         use crate::model::market::yahoo_session::{Session, extended_spans};
@@ -32,7 +31,7 @@ impl ChartCard {
         );
         let clipped = painter.with_clip_rect(plot);
         let intervals = shown.iter().map(|bar| (bar.open_time, bar.close_time.saturating_add(1)))
-            .chain(tail.map(|bar| (bar.open_time, crate::model::market::bucket::next_bucket_start_ms(timeframe, bar.open_time))));
+            .chain(tail.map(|bar| (bar.open_time, bar.end_time)));
         // Merge adjacent same-session spans to avoid seams and unnecessary shapes.
         let mut pending: Option<(f32, f32, Color32)> = None;
         let paint = |left, right, color| {
