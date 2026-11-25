@@ -39,6 +39,7 @@ pub struct Policy {
 pub fn policy(source: DataSource, timeframe: Timeframe) -> Option<Policy> {
     let fresh = match source {
         DataSource::CoinGecko => 120,
+        DataSource::Yahoo => 30,
         DataSource::DexScreener => 30,
         DataSource::Coinbase | DataSource::Okx | DataSource::Alpaca => 0,
         DataSource::Binance | DataSource::Bybit | DataSource::Gate | DataSource::Mexc
@@ -105,6 +106,24 @@ fn patched(candles: &[Kline], tail: &[Kline]) -> Option<Vec<Kline>> {
     Some(merged)
 }
 
+/// A revised completed price can indicate a split or a vendor correction.
+fn historical_prices_revised(candles: &[Kline], tail: &[Kline]) -> bool {
+    let Some(last) = candles.last() else {
+        return false;
+    };
+    tail.iter().filter(|bar| bar.open_time < last.open_time).any(|bar| {
+        candles.binary_search_by_key(&bar.open_time, |held| held.open_time)
+            .ok()
+            .is_some_and(|index| {
+                let held = &candles[index];
+                [held.open, held.high, held.low, held.close]
+                    .into_iter()
+                    .zip([bar.open, bar.high, bar.low, bar.close])
+                    .any(|(old, new)| (old - new).abs() > old.abs().max(1.0) * 1e-6)
+            })
+    })
+}
+
 /// Candles for `source`/`symbol`/`timeframe` through `fetch`, which asks the provider for a `limit`.
 ///
 /// Fresh candles are served as they are; older ones are patched with `fetch(TAIL_LIMIT)`; anything
@@ -156,7 +175,11 @@ pub fn fetch(
         if age < MAX_PATCH_AGE {
             match fetch(TAIL_LIMIT) {
                 Ok(tail) => {
-                    if let Some(merged) = patched(&candles, &tail) {
+                    // Yahoo's historical OHLC can be revised after corporate
+                    // actions. Do not splice a newly adjusted tail onto old prices.
+                    let revised = source == DataSource::Yahoo
+                        && historical_prices_revised(&candles, &tail);
+                    if !revised && let Some(merged) = patched(&candles, &tail) {
                         return Ok(store(&key, requested, merged, limit));
                     }
                 }
@@ -294,6 +317,25 @@ mod tests {
         // More than was held needs a whole fetch.
         fetch(source, "patch-test", Timeframe::HOUR_1, 50, LONG, provider).unwrap();
         assert_eq!(*asked.lock().unwrap(), [10, TAIL_LIMIT, 50]);
+    }
+
+    #[test]
+    fn yahoo_historical_price_revision_requires_a_whole_fetch() {
+        let asked = Mutex::new(Vec::new());
+        let provider = |limit: u32| {
+            asked.lock().unwrap().push(limit);
+            if limit == TAIL_LIMIT {
+                let mut tail = series(6..10);
+                tail[0].close = 99.0;
+                Ok(tail)
+            } else {
+                Ok(series(0..10))
+            }
+        };
+        let source = DataSource::Yahoo;
+        fetch(source, "revision-test", Timeframe::DAY_1, 10, STALE, provider).unwrap();
+        fetch(source, "revision-test", Timeframe::DAY_1, 10, STALE, provider).unwrap();
+        assert_eq!(*asked.lock().unwrap(), [10, TAIL_LIMIT, 10]);
     }
 
     #[test]

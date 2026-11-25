@@ -766,7 +766,8 @@ impl ChartCard {
 
 /// Whether a chart on `source` can raise price alerts: markets with a price quote feed.
 pub fn supports_alerts(source: DataSource) -> bool {
-    source != DataSource::CoinMarketCap && !source.is_prediction_market()
+    !matches!(source, DataSource::CoinMarketCap | DataSource::Yahoo)
+        && !source.is_prediction_market()
 }
 
 /// Whether a table's cell was selected on some chart in the last frame, and forgets it: while one

@@ -40,7 +40,7 @@ pub(super) fn symbol_info(symbol: &str, source: DataSource, chart_type: ChartTyp
         ticker: symbol.to_owned(),
         ticker_id: format!("{}:{}", source.watchlist_slug(), symbol),
         currency: "USD".to_owned(),
-        kind: if source == DataSource::Alpaca {
+        kind: if source.is_us_equity_source() {
             "stock"
         } else {
             "crypto"

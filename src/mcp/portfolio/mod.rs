@@ -196,6 +196,7 @@ fn price_status(quote: Option<&WatchlistQuote>) -> &'static str {
     match quote.map(|quote| quote.freshness) {
         None | Some(Freshness::Unavailable) => "unavailable",
         Some(Freshness::Live) => "live",
+        Some(Freshness::Delayed) => "delayed",
         Some(Freshness::Stale) => "stale",
         Some(Freshness::MarketClosed) => "market_closed",
         Some(Freshness::Unsupported) => "unsupported",

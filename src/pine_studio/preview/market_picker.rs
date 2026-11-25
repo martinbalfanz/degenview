@@ -4,7 +4,6 @@
 use super::{PreviewMarket, PreviewState};
 use crate::i18n::tr;
 use crate::model::DataSource;
-use crate::service::keychain::api_keys::alpaca_configured;
 use crate::service::work_queue::{self, PendingAll};
 use crate::service::{self, SearchResult};
 use crate::ui::icons::{self, Icon};
@@ -57,7 +56,7 @@ pub(super) struct Picker {
 impl Picker {
     fn new(current: &PreviewMarket) -> Self {
         Self {
-            asset: if current.source == DataSource::Alpaca {
+            asset: if current.source.is_us_equity_source() {
                 AssetType::Stock
             } else {
                 AssetType::Crypto
@@ -178,7 +177,7 @@ fn picker_ui(ui: &mut Ui, preview: &mut PreviewState) -> Option<PreviewMarket> {
     let recents: Vec<PreviewMarket> = preview
         .recents
         .iter()
-        .filter(|m| (m.source == DataSource::Alpaca) == (picker.asset == AssetType::Stock))
+        .filter(|m| m.source.is_us_equity_source() == (picker.asset == AssetType::Stock))
         .cloned()
         .collect();
     let query_empty = picker.text().trim().is_empty();
@@ -273,19 +272,6 @@ fn picker_ui(ui: &mut Ui, preview: &mut PreviewState) -> Option<PreviewMarket> {
         |ui| {
             ui.set_min_height(BODY_HEIGHT);
             ui.spacing_mut().item_spacing.y = 0.0;
-            if picker.asset == AssetType::Stock && !alpaca_configured() {
-                if kit::notice_card(
-                    ui,
-                    Icon::TriangleFill,
-                    theme::YELLOW,
-                    tr!("Stocks need Alpaca market data"),
-                    Some(tr!("Add your Alpaca API keys in Settings.")),
-                    Some(tr!("Open Settings")),
-                ) {
-                    preview.pending_settings = true;
-                }
-                return;
-            }
             let rows_width = ui.available_width();
             if query_empty && recents.is_empty() {
                 body_message(
@@ -510,7 +496,7 @@ fn drive_search(picker: &mut Picker, ctx: &egui::Context) {
     }
     let sources: Vec<DataSource> = match picker.asset {
         AssetType::Crypto => CRYPTO_SOURCES.to_vec(),
-        AssetType::Stock => vec![DataSource::Alpaca],
+        AssetType::Stock => vec![DataSource::Alpaca, DataSource::Yahoo],
     };
     let searches = sources.into_iter().map(|source| {
         let query = query.clone();

@@ -90,6 +90,7 @@ pub fn source_id(source: DataSource) -> &'static str {
         DataSource::CoinGecko => "coingecko",
         DataSource::DexScreener => "dexscreener",
         DataSource::Alpaca => "alpaca",
+        DataSource::Yahoo => "yahoo",
         DataSource::Polymarket => "polymarket",
         DataSource::Kalshi => "kalshi",
         DataSource::CoinMarketCap => "coinmarketcap",
@@ -208,6 +209,7 @@ fn volume_unit(kind: VolumeKind) -> &'static str {
 fn status(freshness: Freshness) -> &'static str {
     match freshness {
         Freshness::Live => "live",
+        Freshness::Delayed => "delayed",
         Freshness::Stale => "stale",
         Freshness::MarketClosed => "market_closed",
         Freshness::Unavailable => "unavailable",

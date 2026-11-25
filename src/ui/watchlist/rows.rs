@@ -74,7 +74,7 @@ pub fn icon_base_symbol(item: &WatchlistInstrument) -> String {
             .display_name
             .clone()
             .unwrap_or_else(|| item.name.clone()),
-        DataSource::Alpaca => symbol.to_uppercase(),
+        DataSource::Alpaca | DataSource::Yahoo => symbol.to_uppercase(),
         DataSource::CoinMarketCap => "CMC".to_owned(),
     }
 }
@@ -242,7 +242,7 @@ pub fn instrument_row(ui: &mut egui::Ui, item: &WatchlistInstrument, row: &RowSt
     );
     let quote = (row.quote)(&item.instrument);
     let quote = quote.as_ref();
-    let dimmed = quote.is_some_and(|quote| quote.last.is_some() && !quote.freshness.is_current());
+    let dimmed = quote.is_some_and(|quote| quote.last.is_some() && !quote.freshness.is_recent());
     let alpha = if row.dragged {
         0.4
     } else if dimmed {

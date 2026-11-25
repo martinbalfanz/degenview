@@ -333,7 +333,7 @@ impl Engine {
                         && self
                             .known
                             .get(key)
-                            .is_none_or(|quote| !quote.freshness.is_current())
+                            .is_none_or(|quote| !quote.freshness.is_recent())
                 });
                 AlertProviderHealth {
                     source,
@@ -691,7 +691,7 @@ impl Engine {
     pub fn age_quotes(&mut self, now: i64) {
         let mut updates = HashMap::new();
         for (key, quote) in &self.known {
-            if !quote.freshness.is_current() {
+            if !quote.freshness.is_recent() {
                 continue;
             }
             let (Some(confirmed), Some(source)) = (self.received.get(key), self.source_of(key))
@@ -760,7 +760,7 @@ impl Engine {
     }
 }
 
-const ALL_SOURCES: [DataSource; 13] = [
+const ALL_SOURCES: [DataSource; 14] = [
     DataSource::Binance,
     DataSource::Coinbase,
     DataSource::Okx,
@@ -771,6 +771,7 @@ const ALL_SOURCES: [DataSource; 13] = [
     DataSource::CoinGecko,
     DataSource::DexScreener,
     DataSource::Alpaca,
+    DataSource::Yahoo,
     DataSource::Polymarket,
     DataSource::Kalshi,
     DataSource::CoinMarketCap,

@@ -157,7 +157,7 @@ pub fn price_block(source: DataSource, quote: Option<&WatchlistQuote>) -> Option
         direction,
         price: watchlist::quote::last_text(Some(quote), Some(source)),
         change,
-        stale: quote.freshness == Freshness::Stale,
+        stale: !quote.freshness.is_recent(),
     })
 }
 

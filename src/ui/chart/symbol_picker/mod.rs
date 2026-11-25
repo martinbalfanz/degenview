@@ -1439,15 +1439,15 @@ impl SymbolPicker {
             .map(|(_, error)| error);
         match failure {
             Some(ProviderError::MissingKey) => {
-                Some(Notice::missing_key(tr!("Stocks need an Alpaca key")))
+                Some(Notice::missing_key(tr!("Alpaca needs an API key")))
             }
             Some(error) => Some(Notice {
-                title: tr!("Stocks could not be searched"),
+                title: tr!("Alpaca stocks could not be searched"),
                 detail: error.to_string(),
                 settings: false,
             }),
             None if self.needs_alpaca => {
-                Some(Notice::missing_key(tr!("Set up Alpaca to open a stock")))
+                Some(Notice::missing_key(tr!("Set up Alpaca to open an Alpaca chart")))
             }
             None => None,
         }

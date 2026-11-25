@@ -68,6 +68,7 @@ impl PreviewMarket {
                 | DataSource::CoinGecko
                 | DataSource::DexScreener
                 | DataSource::Alpaca
+                | DataSource::Yahoo
         )
     }
 
