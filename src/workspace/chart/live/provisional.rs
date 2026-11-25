@@ -55,7 +55,7 @@ impl Provisional {
         if self.observed_through.is_some_and(|ts| quote.timestamp_ms <= ts) {
             // An identical book observation can redraw its existing preview,
             // but cannot revive samples discarded by a REST correction.
-            if self.sampled.is_none_or(|(_, _, ts)| ts != quote.timestamp_ms) {
+            if self.sampled.is_none_or(|(_, sample, ts)| ts != quote.timestamp_ms || sample.close != quote.price) {
                 return None;
             }
         }

@@ -289,6 +289,7 @@ pub(super) fn detail_panel(
         };
         let price = watchlist::quote::last_text(Some(extended), Some(source));
         let percent = watchlist::quote::percent_text(Some(extended), Some(source));
+        let change = watchlist::quote::change_text(Some(extended), Some(source));
         let ink = match watchlist::quote::direction(Some(extended)) {
             Direction::Up => theme::UP,
             Direction::Down => theme::DOWN,
@@ -301,6 +302,11 @@ pub(super) fn detail_panel(
         let pill = detail_pill(ui, right - 8.0, y + 24.0, &percent, ink, theme::with_alpha(ink, 0.14), None);
         let value = kit::digits(ui, &price, 14.0, kit::SEMIBOLD, theme::text_primary(), (pill.left() - left - 18.0).max(20.0));
         ui.painter().galley(Pos2::new(left + 10.0, y + 18.0), value, theme::text_primary());
+        if let Some(timestamp) = extended.timestamp_ms {
+            let updated = crate::model::paper::format::timestamp(timestamp, crate::service::system::timezone::local_utc_offset_secs(timestamp));
+            ui.interact(rect, Id::new(("watchlist-extended-quote", list.id)), Sense::hover())
+                .on_hover_text(format!("{label}: {price}\n{change} ({percent})\n{updated}"));
+        }
         y += DETAIL_TILE + DETAIL_GAP;
     }
 

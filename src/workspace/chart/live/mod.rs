@@ -70,10 +70,18 @@ impl ChartWorkspace {
             let preview = chart.candles.last().and_then(|last| {
                 chart.yahoo_preview.observe(self.timeframe, last, observation)
             });
-            if observation.is_none() {
+            if !active {
                 chart.yahoo_preview.clear();
             }
-            chart.chart.set_yahoo_quote(observation.map(|quote| quote.price));
+            // Do not draw a stale same-bucket price marker after REST has
+            // superseded its preview. Other buckets can still show a quote.
+            let marker = observation.filter(|quote| {
+                preview.is_some() || chart.candles.last().is_some_and(|last| {
+                    !self.timeframe.is_intraday()
+                        || crate::model::market::bucket::bucket_start_ms(self.timeframe, quote.timestamp_ms) != last.open_time
+                })
+            });
+            chart.chart.set_yahoo_quote(marker.map(|quote| quote.price));
             chart.chart.set_yahoo_preview(preview);
         }
     }

@@ -770,15 +770,17 @@ impl Engine {
     /// its own receipt time. REST can refine its reference without replacing
     /// the observed price. Never let an extended tick affect regular sorting.
     pub(super) fn refresh_yahoo_extended(&mut self, now: i64) {
-        self.yahoo_extended.retain(|_, (tick, received)| {
+        self.yahoo_extended.retain(|_, (tick, _)| {
             tick.timestamp_ms.is_some_and(|ts| {
                 yahoo_session::session_at(ts) == yahoo_session::session_at(now)
                     && matches!(yahoo_session::session_at(ts), Some(Session::Pre | Session::Post))
                     && now.saturating_sub(ts) <= 30 * 60_000
-                    && evaluate_freshness(DataSource::Yahoo, *received, now).is_recent()
             })
         });
         let quotes = self.yahoo_extended.iter().filter_map(|(key, (tick, received))| {
+            if !evaluate_freshness(DataSource::Yahoo, *received, now).is_recent() {
+                return None;
+            }
             let rest = self.yahoo_rest.get(key)?;
             let mut tick = *tick;
             yahoo_reference(rest, &mut tick);
@@ -889,10 +891,12 @@ fn yahoo_reference(rest: &SourceQuote, tick: &mut SourceQuote) {
         (ms + offset * 1000).div_euclid(86_400_000)
     };
     let same_day = day(old) == day(ts);
+    let near_close = session_at(old - 60_000) == Some(Session::Regular)
+        && session_at(old + 60_000) == Some(Session::Post);
     let recent_prior = day(ts) > day(old) && day(ts) - day(old) <= 4;
     match session_at(ts) {
         Some(Session::Pre) => {
-            if recent_prior {
+            if recent_prior && near_close {
                 tick.previous_day_price = Some(rest.price);
             }
             tick.volume_24h = None;
@@ -911,9 +915,7 @@ fn yahoo_reference(rest: &SourceQuote, tick: &mut SourceQuote) {
         }
         Some(Session::Post) => {
             // Avoid substituting a midday quote for the close.
-            if same_day && session_at(old - 60_000) == Some(Session::Regular)
-                && session_at(old + 60_000) == Some(Session::Post)
-            {
+            if same_day && near_close {
                 tick.previous_day_price = Some(rest.price);
             }
             tick.volume_24h = None;
@@ -972,6 +974,11 @@ mod yahoo_stream_tests {
         assert_eq!(book.get(&instrument), Some(primary.clone()));
         engine.refresh_yahoo_extended(pre + 120_001);
         assert!(book.get_extended(&instrument).is_none());
+        engine.receive_ticks(vec![StreamTick {
+            source: DataSource::Yahoo, product_id: "NVDA".into(),
+            quote: SourceQuote { price: 147.5, timestamp_ms: Some(pre), ..SourceQuote::default() },
+        }], pre + 120_002);
+        assert!(book.get_extended(&instrument).is_none(), "duplicate cannot refresh an expired observation");
         assert_eq!(book.get(&instrument), Some(primary));
     }
 

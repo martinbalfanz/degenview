@@ -22,3 +22,14 @@ impl Preview {
         candle.close = self.close;
     }
 }
+
+#[cfg(test)]
+#[test]
+fn yahoo_render_copy_keeps_volume_and_time() {
+    let rest = crate::model::Kline { open_time: 1, close_time: 60_000, open: 100.0, high: 103.0, low: 99.0, close: 102.0, volume: 500.0 };
+    let mut copy = rest.clone();
+    Preview { open_time: 1, open: 100.0, high: 105.0, low: 99.0, close: 105.0 }.apply_to(&mut copy);
+    assert_eq!((copy.high, copy.close), (105.0, 105.0));
+    assert_eq!((copy.open_time, copy.close_time, copy.volume), (rest.open_time, rest.close_time, rest.volume));
+    assert_eq!(rest.close, 102.0);
+}
