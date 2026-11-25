@@ -149,3 +149,155 @@ fn derivative_metadata_rejects_wrong_type_currency_or_exchange() {
     assert!(quotes[1].derivative().unwrap().has_volume());
     assert!(quotes[2].derivative().is_none());
 }
+
+// P3 diagnostics intentionally use the raw vendor intervals. Do not normalize
+// a native hourly timestamp through the UTC fold before comparing it.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct HourlyComparison {
+    aligned_utc: usize,
+    shifted_utc: usize,
+    complete_quarters: usize,
+    matching_ohlcv: usize,
+    matching_ohlc: usize,
+    incomplete_quarters: usize,
+}
+
+fn close_enough(a: f64, b: f64) -> bool {
+    (a - b).abs() <= a.abs().max(b.abs()).max(1.0) * 1e-6
+}
+
+fn compare_native_hourly(hours: &[Bar], quarters: &[Bar]) -> HourlyComparison {
+    let mut report = HourlyComparison::default();
+    for hour in hours {
+        if hour.timestamp.rem_euclid(3_600) == 0 {
+            report.aligned_utc += 1;
+        } else {
+            report.shifted_utc += 1;
+        }
+        let start = quarters.partition_point(|bar| bar.timestamp < hour.timestamp);
+        let end = quarters.partition_point(|bar| bar.timestamp < hour.timestamp + 3_600);
+        let window = &quarters[start..end];
+        if window.len() != 4
+            || window.iter().enumerate().any(|(i, bar)| bar.timestamp != hour.timestamp + i as i64 * 900)
+        {
+            // Session-end partial bars, missing observations and request
+            // boundaries require separate interpretation, not fake quarters.
+            report.incomplete_quarters += 1;
+            continue;
+        }
+        report.complete_quarters += 1;
+        let high = window.iter().map(|bar| bar.high).fold(f64::NEG_INFINITY, f64::max);
+        let low = window.iter().map(|bar| bar.low).fold(f64::INFINITY, f64::min);
+        let ohlc_matches = [hour.open, hour.high, hour.low, hour.close].into_iter()
+            .zip([window[0].open, high, low, window[3].close])
+            .all(|(a, b)| close_enough(a, b));
+        if ohlc_matches {
+            report.matching_ohlc += 1;
+            let volume = window.iter().try_fold(0.0, |sum, bar| bar.volume.map(|v| sum + v));
+            if hour.volume.zip(volume).is_some_and(|(a, b)| close_enough(a, b)) {
+                report.matching_ohlcv += 1;
+            }
+        }
+    }
+    report
+}
+
+#[test]
+fn yahoo_native_hourly_comparison_does_not_relabel_shifted_bars_or_fill_gaps() {
+    let raw = |timestamp, price: f64, volume| Bar {
+        timestamp, open: price, high: price + 1.0, low: price - 1.0, close: price,
+        volume: Some(volume),
+    };
+    let quarters = vec![
+        raw(1800, 10.0, 10.0), raw(2700, 11.0, 20.0),
+        raw(3600, 12.0, 30.0), raw(4500, 13.0, 40.0),
+        raw(5400, 14.0, 50.0),
+    ];
+    let hours = vec![
+        Bar { timestamp: 1800, open: 10.0, high: 14.0, low: 9.0, close: 13.0, volume: Some(100.0) },
+        raw(5400, 14.0, 50.0),
+    ];
+    assert_eq!(compare_native_hourly(&hours, &quarters), HourlyComparison {
+        aligned_utc: 0, shifted_utc: 2, complete_quarters: 1,
+        matching_ohlcv: 1, matching_ohlc: 1, incomplete_quarters: 1,
+    });
+    let mut wrong_volume = hours.clone();
+    wrong_volume[0].volume = Some(99.0);
+    let report = compare_native_hourly(&wrong_volume, &quarters);
+    assert_eq!((report.matching_ohlc, report.matching_ohlcv), (1, 0));
+    let mut relabeled = hours;
+    relabeled[0].timestamp = 3600;
+    assert_eq!(compare_native_hourly(&relabeled, &quarters).matching_ohlcv, 0);
+}
+
+#[test]
+fn yahoo_native_hourly_diagnostic_range_and_session_flag() {
+    assert_eq!(Interval::Hour.max_window_seconds(), Some(730 * DAY));
+    let path = chart_path("NVDA", Interval::Hour, 0, 730 * DAY, true).unwrap();
+    assert!(path.contains("interval=60m"));
+    assert!(path.ends_with("includePrePost=true"));
+    assert!(chart_path("NVDA", Interval::Hour, 0, 731 * DAY, false).is_err());
+}
+
+fn print_hourly_samples(label: &str, response: &Chart) {
+    let mut offsets = std::collections::BTreeMap::new();
+    for bar in &response.bars {
+        *offsets.entry(bar.timestamp.rem_euclid(3_600) / 60).or_insert(0usize) += 1;
+    }
+    println!("{label}: symbol={} zone={:?} bars={} UTC minute offsets={offsets:?}",
+        response.meta.symbol, response.meta.exchange_timezone_name, response.bars.len());
+    println!("  first={:?} last={:?}", response.bars.first(), response.bars.last());
+    println!("  trading_periods present={} current_trading_period={:?}",
+        response.meta.trading_periods.is_some(), response.meta.current_trading_period);
+    for bar in response.bars.iter().take(20) {
+        let ms = bar.timestamp * 1000;
+        let time = crate::pine::time::calendar::components(ms
+            + crate::pine::time::zone_offset_secs(Some("America/New_York"), ms) * 1000);
+        println!("  NY {:04}-{:02}-{:02} {:02}:{:02} UTC={} O={} H={} L={} C={} V={:?}",
+            time.year, time.month, time.day, time.hour, time.minute, bar.timestamp,
+            bar.open, bar.high, bar.low, bar.close, bar.volume);
+    }
+}
+
+fn probe_native_hourly(extended: bool) {
+    let symbol = "NVDA";
+    // Closed UTC days only; seven days include several completed sessions.
+    // Each probe uses exactly three chart requests via the existing transport.
+    let today = (crate::clock::now_ms() / 1000).div_euclid(DAY) * DAY;
+    let recent_start = today - 7 * DAY;
+    let old_start = today - 700 * DAY;
+    let old_end = old_start + 7 * DAY;
+    let old = chart(symbol, Interval::Hour, old_start, old_end, extended)
+        .expect("Yahoo native 60m old window");
+    print_hourly_samples("700-day-old sample", &old);
+    assert!(old.meta.equity_price_scale().is_some(), "unexpected instrument metadata");
+    assert!(!old.bars.is_empty(), "no old hourly history returned");
+    assert!(old.bars.iter().all(|bar| (old_start..old_end).contains(&bar.timestamp)),
+        "old response included a timestamp outside the requested window");
+
+    let hours = chart(symbol, Interval::Hour, recent_start, today, extended)
+        .expect("Yahoo recent native 60m");
+    let quarters = chart(symbol, Interval::FifteenMinutes, recent_start, today, extended)
+        .expect("Yahoo recent 15m comparison");
+    print_hourly_samples("recent native hourly", &hours);
+    assert!(hours.meta.equity_price_scale().is_some());
+    assert!(quarters.meta.equity_price_scale().is_some());
+    assert!(!hours.bars.is_empty() && !quarters.bars.is_empty());
+    let report = compare_native_hourly(&hours.bars, &quarters.bars);
+    println!("includePrePost={extended} comparison={report:?}");
+    assert!(report.complete_quarters > 0, "no complete hourly comparison windows");
+    // Differences are diagnostic results, not an assertion that two feeds
+    // must match. Retain the raw timestamps and report before choosing a grid.
+}
+
+#[test]
+#[ignore = "network; three Yahoo requests; tests regular native hourly retention and alignment"]
+fn live_yahoo_native_hourly_regular_history() {
+    probe_native_hourly(false);
+}
+
+#[test]
+#[ignore = "network; three Yahoo requests; tests extended native hourly retention and alignment"]
+fn live_yahoo_native_hourly_extended_history() {
+    probe_native_hourly(true);
+}
