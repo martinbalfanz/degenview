@@ -12,12 +12,14 @@
 - [x] Additional international market profiles (London GBp normalization, European exchanges, Toronto).
 - [x] Selected FX and rolling futures symbols.
 - Owner compiled 6833a65 and verified NVDA 1m/5m chart updates. Regular live test timed out; no claim of proven WebSocket delivery. The warning for unused native interval variants is addressed by removing the unused variants.
-- Last owner-confirmed working head: `191cfe140d666b12c51278a038fa9d0b81e83f98`. These are manual confirmations, not a claim that all cargo tests or edge cases passed.
+- [x] Owner compiled `fc24fc6646611bc68dc3f141bc15642f97957279` and passed `live_yahoo_receives_extended_session_tick` on 2026-11-25 in 1.36 s. Accepted SPY at 704.49, vendor timestamp 1795608368000, PRE enum 0, absent currency and volume. No compiler warnings in supplied output.
+- Last owner-confirmed symbol coverage head: `191cfe140d666b12c51278a038fa9d0b81e83f98`. Last owner-confirmed premarket socket diagnostic head: `fc24fc6646611bc68dc3f141bc15642f97957279`. These are limited validation results, not a claim that all cargo tests or edge cases passed.
 
 ## P0 — validate current branch before expanding streaming
 
 - [ ] Compile current head, run cargo fmt --all -- --check, cargo check --locked, cargo test --lib, cargo clippy --all-targets --all-features -- -D warnings; follow upstream AGENTS.md and relevant guides. Fix errors before adding scope.
-- [ ] Live WebSocket verification: owner reported regular-session test timed out at 6833a65; chart updates on NVDA 1m/5m were confirmed but REST can account for them. Run the revised diagnostic in the matching session: cargo test --lib live_yahoo_receives_extended_session_tick -- --ignored --nocapture or cargo test --lib live_yahoo_receives_regular_session_tick -- --ignored --nocapture. It now distinguishes wrong session, handshake, quiet socket, undecodable frames and rejected tick metadata.
+- [x] Premarket WebSocket handshake, subscription, decoding and sparse-tick admission verified at fc24fc6. The previous regular-session diagnostic at 6833a65 timed out; retest using the revised diagnostic.
+- [ ] Regular-session live verification: cargo test --lib live_yahoo_receives_regular_session_tick -- --ignored --nocapture. After-hours delivery separately unverified.
 - [ ] Test watchlist tick updates, quote age, REST fallback, reconnect, proxy changes, symbol changes, no timestamp regression, previous close, cumulative volume. Capture sanitized real protocol fixtures to test envelope variations.
 - [ ] Test NVDA chart with sidebar closed, daily/5m switch, replay, historical pan, tab hide, no extra socket per chart, snapshot. Verify indicative quote and provisional candle overlay update separately from authoritative OHLCV; no Pine/VWAP changes, no persistence of previews.
 - [ ] Confirm quote session/type field handling and ticker subscription behavior; keep REST when vendor data is absent. The current implementation is not certified real-time.
@@ -38,7 +40,8 @@
 - [x] Experimental startup opt-in for US stock/ETF intraday history, isolated cache and chart watermark; extended stream admission and explicit extended live test.
 - [x] Persist source-wide extended-hours preference in Settings → Yahoo Finance, effective on restart; environment flag retained as explicit diagnostic override.
 - [ ] Review quote reference and Pine/session stats; evaluate per-chart setting or safe immediate reload after validation. Validate pre/post session flags, OHLCV, corporate actions, holidays/early closes; do not mix regular and extended history silently.
-- [ ] Validate extended streaming live, regular/extended session boundaries, cache isolation, closing prints, quote reference and volume semantics. Default regular session. Run cargo test --lib live_yahoo_receives_extended_session_tick -- --ignored --nocapture in premarket/after-hours.
+- [x] Premarket live transport and decoder acceptance verified.
+- [ ] Validate after-hours delivery, full coordinator/watchlist publication, regular/extended session boundaries, cache isolation, closing prints, quote reference and volume semantics. Default regular session.
 
 ## P3 — deeper hourly history
 
@@ -58,4 +61,9 @@
 Read this roadmap and provider notes, inspect PR #1 and current branch head, then select the first uncompleted task in priority order. Record exact commits, outcomes and remaining uncertainties here after each increment. Keep main untouched. The original implementation environment could access GitHub but not build Rust or reach live Yahoo; the owner runs local tests. Do not mark an item validated until evidence is available. If a review or local test reports an error, fix that before expanding scope.
 
 ### 2026-11-25 owner feedback
-Settings persisted across restart. NVDA and TSLA premarket socket frames decoded successfully with missing currency and volume; strict currency requirement caused timeout. This increment accepts sparse USD-scope ticks after REST metadata validation, maintains a separate REST baseline for watchlist change/volume, and restyles secondary text. Validate both live tests and watchlist in the app. The restart requirement was questioned: remove only after capturing session policy per request/cache key, invalidating in-flight chart and overlay requests and Pine security caches, clearing stale extended watchlist quotes, and auditing background consumers. Do not mix histories or silently change script inputs.
+Settings persisted across restart. NVDA and TSLA premarket socket frames decoded successfully with missing currency and volume; strict currency requirement caused timeout. This increment accepts sparse USD-scope ticks after REST metadata validation, maintains a separate REST baseline for watchlist change/volume, and restyles secondary text. Premarket diagnostic subsequently passed at fc24fc6; validate the regular-session and after-hours tests and watchlist in the app. The restart requirement was questioned: remove only after capturing session policy per request/cache key, invalidating in-flight chart and overlay requests and Pine security caches, clearing stale extended watchlist quotes, and auditing background consumers. Do not mix histories or silently change script inputs.
+
+### Restart-free switching implementation order
+1. Capture an immutable session-policy snapshot for each fetch before deriving its cache key, including retries, history paging, and Pine security requests. Keep regular and extended caches isolated.
+2. Introduce a session-policy revision, discard old in-flight results, and reload affected chart and overlay histories; invalidate Pine security caches and active script runs that depend on Yahoo. Audit hidden/background consumers and replay.
+3. On disabling extended hours, restore the validated regular-session watchlist baseline and reject queued extended ticks. Repaint affected windows and preserve the saved preference. Test rapid toggles, in-flight requests, and reverting to regular mode before removing the restart notice.
