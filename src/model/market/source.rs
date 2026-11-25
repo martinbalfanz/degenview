@@ -16,6 +16,7 @@ pub enum DataSource {
     CoinGecko,
     DexScreener,
     Alpaca,
+    Yahoo,
     Polymarket,
     Kalshi,
     CoinMarketCap,
@@ -34,6 +35,7 @@ impl DataSource {
             Self::CoinGecko => "CoinGecko",
             Self::DexScreener => "DEXScreener",
             Self::Alpaca => "Alpaca (IEX)",
+            Self::Yahoo => "Yahoo Finance",
             Self::Polymarket => "Polymarket",
             Self::Kalshi => "Kalshi",
             Self::CoinMarketCap => "CoinMarketCap",
@@ -53,6 +55,7 @@ impl DataSource {
             Self::CoinGecko => "COINGECKO",
             Self::DexScreener => "DEXSCREENER",
             Self::Alpaca => "ALPACA",
+            Self::Yahoo => "YAHOO",
             Self::Polymarket => "POLYMARKET",
             Self::Kalshi => "KALSHI",
             Self::CoinMarketCap => "CMC",
@@ -61,7 +64,7 @@ impl DataSource {
 
     /// The source a `watchlist_slug` names, in any case.
     pub fn from_watchlist_slug(slug: &str) -> Option<Self> {
-        const ALL: [DataSource; 13] = [
+        const ALL: [DataSource; 14] = [
             DataSource::Binance,
             DataSource::Coinbase,
             DataSource::Okx,
@@ -72,6 +75,7 @@ impl DataSource {
             DataSource::CoinGecko,
             DataSource::DexScreener,
             DataSource::Alpaca,
+            DataSource::Yahoo,
             DataSource::Polymarket,
             DataSource::Kalshi,
             DataSource::CoinMarketCap,
@@ -110,6 +114,11 @@ impl DataSource {
         matches!(self, Self::Polymarket | Self::Kalshi)
     }
 
+    /// Providers whose charts currently use US equity conventions.
+    pub fn is_us_equity_source(self) -> bool {
+        matches!(self, Self::Alpaca | Self::Yahoo)
+    }
+
     /// Whether this source reports per-candle turnover for the volume bars to draw. CoinGecko's
     /// OHLC endpoint has no volume column, and the line charts report none at all.
     pub fn provides_volume(self) -> bool {
@@ -124,6 +133,7 @@ impl DataSource {
                 | Self::Mexc
                 | Self::DexScreener
                 | Self::Alpaca
+                | Self::Yahoo
         )
     }
 
@@ -152,7 +162,8 @@ impl DataSource {
             | Self::Gate
             | Self::Mexc
             | Self::CoinGecko
-            | Self::Alpaca => raw.to_uppercase(),
+            | Self::Alpaca
+            | Self::Yahoo => raw.to_uppercase(),
             Self::CoinMarketCap => super::cmc::title(raw).to_owned(),
             _ => raw.to_owned(),
         }
@@ -165,6 +176,7 @@ impl DataSource {
         let upper = symbol.trim().to_uppercase();
         let head = upper.split(['/', '-', ' ', '_']).next().unwrap_or(&upper);
         match self {
+            Self::Yahoo => upper.split(" — ").next().unwrap_or(&upper),
             // A one-letter "base" is a bare wrapped asset (WBTC, WETH), not a pair.
             Self::Binance | Self::Bybit => split_binance_pair(head)
                 .map(|(base, _)| base)

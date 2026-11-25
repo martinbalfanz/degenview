@@ -74,7 +74,7 @@ pub fn icon_base_symbol(item: &WatchlistInstrument) -> String {
             .display_name
             .clone()
             .unwrap_or_else(|| item.name.clone()),
-        DataSource::Alpaca => symbol.to_uppercase(),
+        DataSource::Alpaca | DataSource::Yahoo => symbol.to_uppercase(),
         DataSource::CoinMarketCap => "CMC".to_owned(),
     }
 }

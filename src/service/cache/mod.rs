@@ -39,6 +39,7 @@ pub struct Policy {
 pub fn policy(source: DataSource, timeframe: Timeframe) -> Option<Policy> {
     let fresh = match source {
         DataSource::CoinGecko => 120,
+        DataSource::Yahoo => 30,
         DataSource::DexScreener => 30,
         DataSource::Coinbase | DataSource::Okx | DataSource::Alpaca => 0,
         DataSource::Binance | DataSource::Bybit | DataSource::Gate | DataSource::Mexc

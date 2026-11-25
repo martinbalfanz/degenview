@@ -32,7 +32,7 @@ pub const CRYPTO_SOURCES: [DataSource; 9] = [
     DataSource::CoinGecko,
     DataSource::DexScreener,
 ];
-pub const STOCK_SOURCES: [DataSource; 1] = [DataSource::Alpaca];
+pub const STOCK_SOURCES: [DataSource; 2] = [DataSource::Alpaca, DataSource::Yahoo];
 
 /// A provider's ticker search: results, or why there are none.
 pub type SearchFn =
@@ -195,7 +195,7 @@ impl AssetPickerState {
 
     /// Selects a recent market on the section that owns its source, switching to it.
     fn pick_recent(&mut self, result: SearchResult) {
-        self.select_tab(if result.source == DataSource::Alpaca {
+        self.select_tab(if result.source.is_us_equity_source() {
             PickerTab::Stocks
         } else {
             PickerTab::Crypto
@@ -482,10 +482,10 @@ fn idle(ui: &mut Ui, state: &mut AssetPickerState, outcome: &mut Option<AssetPic
                 }
                 PickerTab::Stocks => {
                     let items =
-                        STOCK_SUGGESTIONS.map(|ticker| Chip::Logo(ticker, DataSource::Alpaca));
+                        STOCK_SUGGESTIONS.map(|ticker| Chip::Logo(ticker, DataSource::Yahoo));
                     if let Some(index) = suggestions::suggestion_grid(
                         ui,
-                        tr!("Popular US stocks and ETFs · free IEX feed"),
+                        tr!("Popular US stocks and ETFs"),
                         &items,
                     ) {
                         search = Some(STOCK_SUGGESTIONS[index]);
@@ -703,13 +703,14 @@ mod tests {
         assert!(state.is_due(Instant::now() + Duration::from_secs(1)));
         state.start(&egui::Context::default());
         wait(&mut state);
-        assert_eq!(
-            *calls.lock().unwrap(),
-            vec![(DataSource::Alpaca, "aapl".to_owned())]
-        );
+        let recorded = calls.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 2);
+        for source in STOCK_SOURCES {
+            assert!(recorded.contains(&(source, "aapl".to_owned())));
+        }
         state.select_tab(PickerTab::Stocks);
         assert!(
-            state.results().len() == 1,
+            state.results().len() == 2,
             "re-selecting the same tab changes nothing"
         );
         assert_eq!(state.sources(), STOCK_SOURCES);

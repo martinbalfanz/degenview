@@ -436,6 +436,7 @@ fn price_line(
 /// A dot and a line: crypto trades around the clock; a share says whether its market is open.
 fn status_line(ui: &Ui, at: Pos2, result: &SearchResult, quote: Option<&WatchlistQuote>) -> f32 {
     let (text, open) = match result.source {
+        DataSource::Yahoo => (tr!("Prices may be delayed"), false),
         DataSource::Alpaca => match quote.map(|quote| quote.freshness) {
             Some(Freshness::Live) => (tr!("Market open"), true),
             Some(Freshness::MarketClosed) => (tr!("Market closed"), false),
@@ -506,7 +507,7 @@ fn change_color(change: f64) -> Color32 {
 
 /// Whether a price is quoted to the cent: a share, or anything from a thousand up.
 fn in_cents(source: DataSource, price: f64) -> bool {
-    price.abs() >= 1_000.0 || (source == DataSource::Alpaca && price.abs() >= 1.0)
+    price.abs() >= 1_000.0 || (source.is_us_equity_source() && price.abs() >= 1.0)
 }
 
 /// A price as the app writes one, but to the cent for a share (`228.40`, not `228.4000`).

@@ -760,7 +760,7 @@ impl Engine {
     }
 }
 
-const ALL_SOURCES: [DataSource; 13] = [
+const ALL_SOURCES: [DataSource; 14] = [
     DataSource::Binance,
     DataSource::Coinbase,
     DataSource::Okx,
@@ -771,6 +771,7 @@ const ALL_SOURCES: [DataSource; 13] = [
     DataSource::CoinGecko,
     DataSource::DexScreener,
     DataSource::Alpaca,
+    DataSource::Yahoo,
     DataSource::Polymarket,
     DataSource::Kalshi,
     DataSource::CoinMarketCap,

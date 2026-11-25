@@ -24,7 +24,7 @@ pub fn ticker_icon(ui: &Ui, rect: Rect, symbol: &str, source: DataSource) {
         | DataSource::Gate
         | DataSource::Mexc
         | DataSource::CoinGecko => Some((DataSource::Binance, format!("{base}USDT"))),
-        DataSource::Alpaca => Some((DataSource::Alpaca, base.clone())),
+        DataSource::Alpaca | DataSource::Yahoo => Some((source, base.clone())),
         _ => None,
     };
     if let Some((source, market)) = &lookup

@@ -5,6 +5,9 @@
 //! alignment, session semantics and the mapping to DegenView's instrument model.
 
 use crate::service::{ProviderError, net::http};
+
+mod adapter;
+pub use adapter::YAHOO;
 use serde::Deserialize;
 use std::collections::HashSet;
 
@@ -94,6 +97,7 @@ pub struct Instrument {
     pub symbol: String,
     pub name: String,
     pub exchange: Option<String>,
+    pub exchange_code: Option<String>,
     pub quote_type: String,
 }
 
@@ -104,6 +108,16 @@ pub struct Quote {
     pub previous_close: Option<f64>,
     pub timestamp: Option<i64>,
     pub currency: Option<String>,
+    pub instrument_type: Option<String>,
+    pub exchange_timezone_name: Option<String>,
+}
+
+impl Quote {
+    pub fn is_us_equity(&self) -> bool {
+        self.currency.as_deref() == Some("USD")
+            && self.exchange_timezone_name.as_deref() == Some("America/New_York")
+            && matches!(self.instrument_type.as_deref(), Some("EQUITY" | "ETF"))
+    }
 }
 
 #[derive(Deserialize)]
@@ -361,7 +375,8 @@ fn parse_search(body: &str) -> Result<Vec<Instrument>, ProviderError> {
                     .filter(|name| !name.is_empty())
                     .unwrap_or_else(|| symbol.clone()),
                 symbol,
-                exchange: hit.exchange_display.or(hit.exchange),
+                exchange: hit.exchange_display.or_else(|| hit.exchange.clone()),
+                exchange_code: hit.exchange,
                 quote_type,
             })
         })
@@ -398,6 +413,8 @@ struct SparkMeta {
     previous_close: Option<f64>,
     regular_market_time: Option<i64>,
     currency: Option<String>,
+    instrument_type: Option<String>,
+    exchange_timezone_name: Option<String>,
 }
 
 /// One spark batch, matching Wickline's keyless quote method. The caller
@@ -443,6 +460,8 @@ fn parse_quotes(body: &str) -> Result<Vec<Quote>, ProviderError> {
                     .filter(|price| price.is_finite() && *price != 0.0),
                 timestamp: meta.regular_market_time,
                 currency: meta.currency,
+                instrument_type: meta.instrument_type,
+                exchange_timezone_name: meta.exchange_timezone_name,
             })
         })
         .collect())

@@ -61,6 +61,7 @@ pub fn chunk_size(source: DataSource) -> usize {
     match source {
         DataSource::Binance => 100,
         DataSource::Alpaca => 200,
+        DataSource::Yahoo => crate::service::market::yahoo::QUOTE_BATCH_SIZE,
         DataSource::CoinGecko => 250,
         DataSource::Coinbase => 20,
         // One call answers every spot market, so a round is one request however many rows.
@@ -107,6 +108,7 @@ impl QuoteProvider for LiveProvider {
             DataSource::CoinGecko => coingecko(requests).map(Outcome::from_quotes),
             DataSource::DexScreener => Ok(dexscreener(requests)),
             DataSource::Alpaca => alpaca(requests).map(Outcome::from_quotes),
+            DataSource::Yahoo => yahoo(requests).map(Outcome::from_quotes),
             DataSource::Polymarket | DataSource::Kalshi => Ok(prediction(source, requests)),
             DataSource::CoinMarketCap => Ok(Outcome::default()),
         }
@@ -341,6 +343,34 @@ fn dexscreener(requests: &[QuoteRequest]) -> Outcome {
         }
     }
     outcome
+}
+
+fn yahoo(requests: &[QuoteRequest]) -> Result<HashMap<String, SourceQuote>, QuoteFailure> {
+    let symbols: Vec<&str> = requests.iter().map(|request| request.symbol.as_str()).collect();
+    let quotes = crate::service::market::yahoo::quotes(&symbols).map_err(|error| {
+        if error.is_rate_limited() {
+            QuoteFailure::RateLimited
+        } else {
+            QuoteFailure::Failed(error.to_string())
+        }
+    })?;
+    Ok(requests
+        .iter()
+        .filter_map(|request| {
+            let quote = quotes.iter().find(|quote| {
+                quote.symbol.eq_ignore_ascii_case(&request.symbol) && quote.is_us_equity()
+            })?;
+            Some((
+                request.symbol.clone(),
+                SourceQuote {
+                    price: quote.price,
+                    previous_day_price: quote.previous_close,
+                    timestamp_ms: quote.timestamp.and_then(|seconds| seconds.checked_mul(1_000)),
+                    ..SourceQuote::default()
+                },
+            ))
+        })
+        .collect())
 }
 
 fn alpaca(requests: &[QuoteRequest]) -> Result<HashMap<String, SourceQuote>, QuoteFailure> {

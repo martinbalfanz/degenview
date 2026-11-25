@@ -26,7 +26,7 @@ const RELATED_LIMIT: usize = 6;
 
 /// The markets the picker lists, in the order the providers are asked (and so the order exchanges
 /// that list the same market appear in).
-pub const PROVIDERS: [DataSource; 10] = [
+pub const PROVIDERS: [DataSource; 11] = [
     DataSource::Binance,
     DataSource::Coinbase,
     DataSource::Okx,
@@ -37,6 +37,7 @@ pub const PROVIDERS: [DataSource; 10] = [
     DataSource::DexScreener,
     DataSource::CoinGecko,
     DataSource::Alpaca,
+    DataSource::Yahoo,
 ];
 
 /// The prediction markets the Predictions tab asks, in the order their answers are listed.
@@ -81,8 +82,8 @@ impl Scope {
     pub fn includes(self, source: DataSource) -> bool {
         match self {
             Self::All | Self::Watchlists => PROVIDERS.contains(&source),
-            Self::Stocks => source == DataSource::Alpaca,
-            Self::Crypto => PROVIDERS.contains(&source) && source != DataSource::Alpaca,
+            Self::Stocks => source.is_us_equity_source(),
+            Self::Crypto => PROVIDERS.contains(&source) && !source.is_us_equity_source(),
             Self::Predictions => PREDICTION_PROVIDERS.contains(&source),
             Self::Dashboards => source == DataSource::CoinMarketCap,
         }
@@ -143,14 +144,14 @@ pub fn popular() -> Vec<SearchResult> {
     });
     let stocks = STOCK_SUGGESTIONS
         .iter()
-        .map(|ticker| SearchResult::new(DataSource::Alpaca, *ticker, *ticker));
+        .map(|ticker| SearchResult::new(DataSource::Yahoo, *ticker, *ticker));
     crypto.chain(stocks).collect()
 }
 
 /// What kind of market a provider lists, as the list's right-hand column says it.
 pub fn market_kind(source: DataSource) -> &'static str {
     match source {
-        DataSource::Alpaca => tr!("Stock"),
+        DataSource::Alpaca | DataSource::Yahoo => tr!("Stock"),
         DataSource::Polymarket | DataSource::Kalshi => tr!("Prediction"),
         DataSource::CoinMarketCap => tr!("Index"),
         _ => tr!("Crypto"),
@@ -169,7 +170,7 @@ pub fn trading_kind(source: DataSource) -> &'static str {
         | DataSource::Mexc => tr!("Spot"),
         DataSource::DexScreener => tr!("DEX"),
         DataSource::CoinGecko => tr!("Aggregate"),
-        DataSource::Alpaca => tr!("Stock"),
+        DataSource::Alpaca | DataSource::Yahoo => tr!("Stock"),
         _ => "",
     }
 }
@@ -360,7 +361,7 @@ impl Related {
             found.insert(asset.clone(), answer);
             false
         });
-        if !PROVIDERS.contains(&of.source) || of.source == DataSource::Alpaca {
+        if !PROVIDERS.contains(&of.source) || of.source.is_us_equity_source() {
             return Some(Vec::new());
         }
         let asset = of.base_asset();
@@ -467,7 +468,7 @@ mod tests {
 
     #[test]
     fn a_scope_offers_only_its_own_venues() {
-        assert_eq!(Scope::Stocks.venues(), [DataSource::Alpaca]);
+        assert_eq!(Scope::Stocks.venues(), [DataSource::Alpaca, DataSource::Yahoo]);
         assert!(!Scope::Crypto.venues().contains(&DataSource::Alpaca));
         assert_eq!(Scope::All.venues().len(), PROVIDERS.len());
         assert_eq!(Scope::Watchlists.venues().len(), PROVIDERS.len());
@@ -499,6 +500,7 @@ mod tests {
             DataSource::Mexc,
             DataSource::DexScreener,
             DataSource::CoinGecko,
+            DataSource::Yahoo,
         ] {
             search
                 .answers

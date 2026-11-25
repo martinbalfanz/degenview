@@ -90,3 +90,11 @@ fn spark_preserves_previous_close_currency_and_vendor_time() {
     assert!(quotes(&["AAPL,MSFT"]).is_err());
     assert!(quotes(&["AAPL"; QUOTE_BATCH_SIZE + 1]).is_err());
 }
+
+#[test]
+fn only_us_equity_quotes_qualify_for_the_initial_adapter() {
+    let body = r#"{"spark":{"error":null,"result":[{"symbol":"AAPL","response":[{"meta":{"regularMarketPrice":100.0,"currency":"USD","instrumentType":"EQUITY","exchangeTimezoneName":"America/New_York"}}]},{"symbol":"BAS.DE","response":[{"meta":{"regularMarketPrice":50.0,"currency":"EUR","instrumentType":"EQUITY","exchangeTimezoneName":"Europe/Berlin"}}]}]}}"#;
+    let quotes = parse_quotes(body).unwrap();
+    assert!(quotes[0].is_us_equity());
+    assert!(!quotes[1].is_us_equity());
+}

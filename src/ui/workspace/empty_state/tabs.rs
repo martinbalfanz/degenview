@@ -201,7 +201,7 @@ fn favorites(ui: &mut Ui, input: &EmptyStateInput, frame: &mut Frame) {
 fn suggestions(ui: &mut Ui, frame: &mut Frame) {
     starters(ui, &CRYPTO, DataSource::Binance, "empty-crypto", frame);
     tiles::separator(ui);
-    starters(ui, &STOCKS, DataSource::Alpaca, "empty-stock", frame);
+    starters(ui, &STOCKS, DataSource::Yahoo, "empty-stock", frame);
 }
 
 /// A grid of starter markets from one provider: crypto is quoted in USDT, stocks by ticker.

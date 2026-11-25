@@ -366,7 +366,7 @@ pub enum MarketHours {
 impl MarketHours {
     pub fn for_source(source: super::DataSource) -> Self {
         match source {
-            super::DataSource::Alpaca => Self::UsStock,
+            super::DataSource::Alpaca | super::DataSource::Yahoo => Self::UsStock,
             _ => Self::Continuous,
         }
     }

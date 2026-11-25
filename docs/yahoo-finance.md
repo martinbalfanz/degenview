@@ -6,10 +6,10 @@ The client deliberately keeps original UTC timestamps, optional volume, exchange
 
 ## Remaining integration work
 
-The client is not yet a selectable market source. Before proposing upstream:
-- Register Yahoo in DataSource and MarketSource; implement supported interval planning, older-history bounds and session-aware OHLC aggregation, including the shortened session-end candle and Yahoo's appended close print. Decide on the adjustment basis and verify it with split and dividend fixtures.
-- Wire symbol picker, watchlist quotes and caches, preserving exact vendor symbols, exchange/currency metadata and quote timestamps. Never present stale or delayed quotes as live. Add a source mark/attribution and translations following the repository guides.
-- Audit all stock-specific logic in Pine, replay, alerts, session statistics, paper trading, portfolio and MCP; disable unsupported capabilities rather than treating non-US markets as US equities or USD instruments.
+The draft registers Yahoo for US equities and ETFs, symbol search, historical charts and REST watchlist quotes. It folds longer candles from native 1/5/15-minute and daily bars on DegenView's UTC grid (not Wickline's session-open grid). Quotes are explicitly not certified live. Paper trading and price alerts are disabled for Yahoo. Before proposing upstream:
+- Validate interval planning, older-history bounds, UTC folds versus session-anchored candles and official close prints against live data. Verify adjustment basis with split and dividend fixtures.
+- Verify picker, quote freshness, caching, source mark, persistence and translations on supported platforms. International markets require instrument-level currency, asset type and session metadata.
+- Finish auditing Pine alerts, replay, session statistics, portfolio, source-specific assumptions and MCP. Yahoo is not yet exposed as an MCP input provider.
 - Add streaming only after validating the vendor's protobuf feed, disconnect behavior, exchange delays and correct cumulative volume handling. Keep REST polling fallback.
 - Run cargo fmt, check, test and clippy and manually verify AAPL, BRK-B, BAS.DE, ^GSPC, EURUSD=X, GC=F, holidays, daylight-saving transitions, range limits and network failures.
 

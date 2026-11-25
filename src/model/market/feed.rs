@@ -40,6 +40,7 @@ impl DataSource {
     pub fn chart_feed_label(self, timeframe: Timeframe) -> &'static str {
         match (self, AlpacaFeed::for_bars(timeframe)) {
             (Self::Alpaca, AlpacaFeed::Sip) => "Alpaca (SIP · 15 min delay on Basic)",
+            (Self::Yahoo, _) => "Yahoo Finance (may be delayed)",
             (source, _) => source.display_name(),
         }
     }
@@ -47,7 +48,8 @@ impl DataSource {
     /// Whether the last close of a chart of `timeframe` is a price of this moment on every
     /// account. False for Alpaca bars from SIP, which a Basic account gets 15 minutes late.
     pub fn bars_are_real_time(self, timeframe: Timeframe) -> bool {
-        !(self == Self::Alpaca && AlpacaFeed::for_bars(timeframe) == AlpacaFeed::Sip)
+        self != Self::Yahoo
+            && !(self == Self::Alpaca && AlpacaFeed::for_bars(timeframe) == AlpacaFeed::Sip)
     }
 }
 

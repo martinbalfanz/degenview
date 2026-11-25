@@ -170,6 +170,9 @@ const ALPACA: [Timeframe; 8] = [
     Timeframe::MONTH_1,
 ];
 
+/// Fold Yahoo's longer intervals from 15 minutes or daily bars on our UTC grid.
+const YAHOO: [Timeframe; 4] = [minutes(1), minutes(5), minutes(15), Timeframe::DAY_1];
+
 /// GeckoTerminal's OHLCV aggregates (it indexes DEXScreener's pools): minute 1, 5 and 15, hour 1,
 /// 4 and 12, and the day.
 const GECKOTERMINAL: [Timeframe; 7] = [
@@ -200,6 +203,7 @@ impl DataSource {
             Self::Gate => &GATE,
             Self::Mexc => &MEXC,
             Self::Alpaca => &ALPACA,
+            Self::Yahoo => &YAHOO,
             Self::DexScreener => &GECKOTERMINAL,
             Self::CoinGecko | Self::Polymarket | Self::Kalshi | Self::CoinMarketCap => &[],
         }
@@ -223,6 +227,7 @@ impl DataSource {
             | Self::Gate
             | Self::Mexc
             | Self::Alpaca
+            | Self::Yahoo
             | Self::DexScreener => self.plan(timeframe).is_some(),
             Self::CoinGecko => samples::chart_days(timeframe, 1).is_some(),
             // Their lines are drawn from points a minute or more apart.
@@ -246,6 +251,7 @@ impl DataSource {
             | Self::Gate
             | Self::Mexc
             | Self::Alpaca => true,
+            Self::Yahoo => self.serves(timeframe),
             Self::DexScreener => self.plan(timeframe).is_some_and(|plan| {
                 let page_days = plan.base().nominal_ms() * GECKOTERMINAL_PAGE as i64 / 86_400_000;
                 page_days < GECKOTERMINAL_HISTORY_DAYS

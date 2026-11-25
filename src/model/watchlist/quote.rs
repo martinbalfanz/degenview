@@ -27,7 +27,7 @@ impl ChangeBasis {
             | DataSource::Mexc
             | DataSource::CoinGecko
             | DataSource::DexScreener => Self::Rolling24h,
-            DataSource::Alpaca => Self::PreviousClose,
+            DataSource::Alpaca | DataSource::Yahoo => Self::PreviousClose,
             DataSource::Polymarket | DataSource::Kalshi | DataSource::CoinMarketCap => Self::Window,
         }
     }
@@ -158,9 +158,14 @@ impl WatchlistQuote {
             change_basis: Some(ChangeBasis::for_source(source)),
             volume: quote.volume_24h,
             volume_kind: quote.volume_kind,
-            timestamp_ms: quote.timestamp_ms.or(Some(received_at_ms)),
+            timestamp_ms: if source == DataSource::Yahoo {
+                quote.timestamp_ms
+            } else {
+                quote.timestamp_ms.or(Some(received_at_ms))
+            },
             freshness: evaluate_freshness(source, received_at_ms, received_at_ms),
-            note: None,
+            note: (source == DataSource::Yahoo)
+                .then(|| tr!("Yahoo prices may be delayed").to_owned()),
         }
     }
 }
@@ -179,6 +184,7 @@ pub fn refresh_interval_secs(source: DataSource) -> u64 {
         | DataSource::Mexc
         | DataSource::Alpaca => 5,
         DataSource::DexScreener => 10,
+        DataSource::Yahoo => 30,
         DataSource::CoinGecko | DataSource::Polymarket | DataSource::Kalshi => 30,
         DataSource::CoinMarketCap => 0,
     }
@@ -196,6 +202,7 @@ pub fn maximum_age_secs(source: DataSource) -> i64 {
         | DataSource::Mexc
         | DataSource::Alpaca => 45,
         DataSource::DexScreener => 60,
+        DataSource::Yahoo => 120,
         // Coinbase is refreshed from REST every 30 seconds when the socket has been quiet.
         DataSource::Coinbase => 90,
         DataSource::CoinGecko | DataSource::Polymarket | DataSource::Kalshi => 120,
@@ -206,7 +213,7 @@ pub fn maximum_age_secs(source: DataSource) -> i64 {
 /// `Stale` once the last refresh is older than the source's window; a stock outside US
 /// hours reads `MarketClosed` (its last price is the close, still current); else `Live`.
 pub fn evaluate_freshness(source: DataSource, received_at_ms: i64, now_ms: i64) -> Freshness {
-    if now_ms - received_at_ms > maximum_age_secs(source) * 1_000 {
+    if source == DataSource::Yahoo || now_ms - received_at_ms > maximum_age_secs(source) * 1_000 {
         return Freshness::Stale;
     }
     if source == DataSource::Alpaca && !is_us_market_open(now_ms) {

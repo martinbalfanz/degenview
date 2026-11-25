@@ -34,6 +34,7 @@ fn supports_ticker_icon_lookup(source: DataSource) -> bool {
             | DataSource::CoinGecko
             | DataSource::DexScreener
             | DataSource::Alpaca
+            | DataSource::Yahoo
     )
 }
 

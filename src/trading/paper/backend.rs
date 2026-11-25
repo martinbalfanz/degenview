@@ -145,6 +145,9 @@ fn instrument(market: &MarketRef) -> Result<PaperInstrument, Unavailable> {
     };
     let source = DataSource::from_watchlist_slug(&market.source)
         .ok_or_else(|| not_here(tr!("Paper trading has no price for this chart.")))?;
+    if source == DataSource::Yahoo {
+        return Err(not_here(tr!("Yahoo prices may be delayed; paper trading is unavailable.")));
+    }
     if source == DataSource::CoinMarketCap {
         return Err(not_here(tr!(
             "CoinMarketCap charts have no tradable price, so paper trading skips them."
