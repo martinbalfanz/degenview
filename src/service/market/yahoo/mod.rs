@@ -18,7 +18,10 @@ use std::time::{Duration, Instant};
 
 const HOSTS: [&str; 2] = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
 const HEADERS: &[(&str, &str)] = &[
-    ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"),
+    (
+        "User-Agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+    ),
     ("Accept", "application/json"),
 ];
 const DAY: i64 = 86_400;
@@ -76,7 +79,12 @@ pub struct ChartMeta {
     pub current_trading_period: Option<serde_json::Value>,
 }
 
-fn index_price_scale(symbol: &str, currency: Option<&str>, timezone: Option<&str>, kind: Option<&str>) -> Option<f64> {
+fn index_price_scale(
+    symbol: &str,
+    currency: Option<&str>,
+    timezone: Option<&str>,
+    kind: Option<&str>,
+) -> Option<f64> {
     if !DataSource::Yahoo.is_yahoo_index(symbol) || kind != Some("INDEX") {
         return None;
     }
@@ -86,12 +94,21 @@ fn index_price_scale(symbol: &str, currency: Option<&str>, timezone: Option<&str
         }
         return market.price_scale(currency?);
     }
-    (currency == Some("USD") && matches!(timezone, Some("America/New_York" | "America/Chicago"))).then_some(1.0)
+    (currency == Some("USD") && matches!(timezone, Some("America/New_York" | "America/Chicago")))
+        .then_some(1.0)
 }
 
-fn equity_price_scale(symbol: &str, currency: Option<&str>, timezone: Option<&str>, exchange: Option<&str>, kind: Option<&str>) -> Option<f64> {
-    if !matches!(kind, Some("EQUITY" | "ETF")) || DataSource::Yahoo.is_yahoo_index(symbol)
-        || DataSource::Yahoo.yahoo_derivative(symbol).is_some() {
+fn equity_price_scale(
+    symbol: &str,
+    currency: Option<&str>,
+    timezone: Option<&str>,
+    exchange: Option<&str>,
+    kind: Option<&str>,
+) -> Option<f64> {
+    if !matches!(kind, Some("EQUITY" | "ETF"))
+        || DataSource::Yahoo.is_yahoo_index(symbol)
+        || DataSource::Yahoo.yahoo_derivative(symbol).is_some()
+    {
         return None;
     }
     if let Some(market) = DataSource::Yahoo.yahoo_market(symbol) {
@@ -103,33 +120,65 @@ fn equity_price_scale(symbol: &str, currency: Option<&str>, timezone: Option<&st
     (currency == Some("USD") && timezone == Some("America/New_York")).then_some(1.0)
 }
 
-fn derivative_metadata(symbol: &str, currency: Option<&str>, timezone: Option<&str>, exchange: Option<&str>, kind: Option<&str>) -> Option<YahooDerivative> {
+fn derivative_metadata(
+    symbol: &str,
+    currency: Option<&str>,
+    timezone: Option<&str>,
+    exchange: Option<&str>,
+    kind: Option<&str>,
+) -> Option<YahooDerivative> {
     let market = DataSource::Yahoo.yahoo_derivative(symbol)?;
     if currency != Some(market.currency()) {
         return None;
     }
     let valid = match market {
-        YahooDerivative::Forex { .. } => kind == Some("CURRENCY")
-            && exchange == Some("CCY")
-            && matches!(timezone, Some("Europe/London" | "America/New_York" | "Etc/UTC" | "UTC" | "GMT")),
-        YahooDerivative::Future { exchange: expected, .. } => kind == Some("FUTURE")
-            && exchange == Some(expected)
-            && matches!(timezone, Some("America/Chicago" | "America/New_York")),
+        YahooDerivative::Forex { .. } => {
+            kind == Some("CURRENCY")
+                && exchange == Some("CCY")
+                && matches!(
+                    timezone,
+                    Some("Europe/London" | "America/New_York" | "Etc/UTC" | "UTC" | "GMT")
+                )
+        }
+        YahooDerivative::Future {
+            exchange: expected, ..
+        } => {
+            kind == Some("FUTURE")
+                && exchange == Some(expected)
+                && matches!(timezone, Some("America/Chicago" | "America/New_York"))
+        }
     };
     valid.then_some(market)
 }
 
 impl ChartMeta {
     fn derivative(&self) -> Option<YahooDerivative> {
-        derivative_metadata(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.exchange_name.as_deref(), self.instrument_type.as_deref())
+        derivative_metadata(
+            &self.symbol,
+            self.currency.as_deref(),
+            self.exchange_timezone_name.as_deref(),
+            self.exchange_name.as_deref(),
+            self.instrument_type.as_deref(),
+        )
     }
 
     fn equity_price_scale(&self) -> Option<f64> {
-        equity_price_scale(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.exchange_name.as_deref(), self.instrument_type.as_deref())
+        equity_price_scale(
+            &self.symbol,
+            self.currency.as_deref(),
+            self.exchange_timezone_name.as_deref(),
+            self.exchange_name.as_deref(),
+            self.instrument_type.as_deref(),
+        )
     }
 
     fn index_price_scale(&self) -> Option<f64> {
-        index_price_scale(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.instrument_type.as_deref())
+        index_price_scale(
+            &self.symbol,
+            self.currency.as_deref(),
+            self.exchange_timezone_name.as_deref(),
+            self.instrument_type.as_deref(),
+        )
     }
 }
 
@@ -174,15 +223,32 @@ pub struct Quote {
 
 impl Quote {
     pub fn derivative(&self) -> Option<YahooDerivative> {
-        derivative_metadata(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.exchange_name.as_deref(), self.instrument_type.as_deref())
+        derivative_metadata(
+            &self.symbol,
+            self.currency.as_deref(),
+            self.exchange_timezone_name.as_deref(),
+            self.exchange_name.as_deref(),
+            self.instrument_type.as_deref(),
+        )
     }
 
     pub fn equity_price_scale(&self) -> Option<f64> {
-        equity_price_scale(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.exchange_name.as_deref(), self.instrument_type.as_deref())
+        equity_price_scale(
+            &self.symbol,
+            self.currency.as_deref(),
+            self.exchange_timezone_name.as_deref(),
+            self.exchange_name.as_deref(),
+            self.instrument_type.as_deref(),
+        )
     }
 
     pub fn index_price_scale(&self) -> Option<f64> {
-        index_price_scale(&self.symbol, self.currency.as_deref(), self.exchange_timezone_name.as_deref(), self.instrument_type.as_deref())
+        index_price_scale(
+            &self.symbol,
+            self.currency.as_deref(),
+            self.exchange_timezone_name.as_deref(),
+            self.instrument_type.as_deref(),
+        )
     }
 
     #[cfg(test)]
@@ -269,9 +335,7 @@ fn get(path: &str) -> Result<String, ProviderError> {
     let get_host = |host| {
         // Share the cooldown across chart, search and watchlist workers.
         // Do not hold a lock over I/O or sleep on a worker.
-        if crate::lock::lock(&RATE_LIMITED_UNTIL)
-            .is_some_and(|until| Instant::now() < until)
-        {
+        if crate::lock::lock(&RATE_LIMITED_UNTIL).is_some_and(|until| Instant::now() < until) {
             return Err(http::Error::Status(429));
         }
         let url = format!("https://{host}{path}");
@@ -305,7 +369,9 @@ fn chart_path(
         .max_window_seconds()
         .is_some_and(|max| end - start > max)
     {
-        return Err(ProviderError::other("Yahoo chart range exceeds interval limit"));
+        return Err(ProviderError::other(
+            "Yahoo chart range exceeds interval limit",
+        ));
     }
     let prepost = extended && interval.max_window_seconds().is_some();
     Ok(format!(
@@ -327,7 +393,9 @@ pub fn chart(
     let path = chart_path(symbol, interval, start, end, extended)?;
     let response = parse_chart(&get(&path)?)?;
     if !response.meta.symbol.eq_ignore_ascii_case(symbol.trim()) {
-        return Err(ProviderError::data("Yahoo returned a different chart symbol"));
+        return Err(ProviderError::data(
+            "Yahoo returned a different chart symbol",
+        ));
     }
     Ok(response)
 }
@@ -550,14 +618,19 @@ fn parse_quotes(body: &str) -> Result<Vec<Quote>, ProviderError> {
         .into_iter()
         .filter_map(|result| {
             let meta = result.response?.into_iter().next()?.meta;
-            let price = meta.regular_market_price.filter(|price| price.is_finite())?;
+            let price = meta
+                .regular_market_price
+                .filter(|price| price.is_finite())?;
             Some(Quote {
                 symbol: result.symbol,
                 price,
                 previous_close: meta
                     .chart_previous_close
                     .filter(|price| price.is_finite() && *price > 0.0)
-                    .or_else(|| meta.previous_close.filter(|price| price.is_finite() && *price > 0.0)),
+                    .or_else(|| {
+                        meta.previous_close
+                            .filter(|price| price.is_finite() && *price > 0.0)
+                    }),
                 regular_market_volume: meta
                     .regular_market_volume
                     .filter(|volume| volume.is_finite() && *volume >= 0.0),

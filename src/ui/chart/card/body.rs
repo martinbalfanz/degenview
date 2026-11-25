@@ -50,7 +50,10 @@ pub(super) fn symbol_info(symbol: &str, source: DataSource, chart_type: ChartTyp
             "crypto"
         }
         .to_owned(),
-        base_currency: source.yahoo_derivative(symbol).and_then(|market| market.base_currency()).map(str::to_owned),
+        base_currency: source
+            .yahoo_derivative(symbol)
+            .and_then(|market| market.base_currency())
+            .map(str::to_owned),
         chart: chart_type.kind(),
     }
 }
@@ -427,11 +430,12 @@ impl ChartCard {
         } else {
             self.appearance.style.effective_type(source)
         };
-        let chart_type = if chart_type == ChartType::VolumeCandles && !source.provides_market_volume(symbol) {
-            ChartType::Candles
-        } else {
-            chart_type
-        };
+        let chart_type =
+            if chart_type == ChartType::VolumeCandles && !source.provides_market_volume(symbol) {
+                ChartType::Candles
+            } else {
+                chart_type
+            };
         self.drawn_type = chart_type;
         let constructed = self.constructed_series(candles, chart_type);
         // Editing a price-based type's construction (box size, reversal) rebuilds its bars, which
@@ -471,8 +475,17 @@ impl ChartCard {
             constructed: constructed.as_deref(),
             outputs: &outputs,
             indicators,
-            preview: self.yahoo_preview.filter(|_| !replay.active && !line && source.yahoo_stream_symbol(symbol) && chart_type == ChartType::Candles),
-            session_levels: if !replay.active && source.yahoo_stream_symbol(symbol) { self.yahoo_session_levels } else { Default::default() },
+            preview: self.yahoo_preview.filter(|_| {
+                !replay.active
+                    && !line
+                    && source.yahoo_stream_symbol(symbol)
+                    && chart_type == ChartType::Candles
+            }),
+            session_levels: if !replay.active && source.yahoo_stream_symbol(symbol) {
+                self.yahoo_session_levels
+            } else {
+                Default::default()
+            },
         };
         let layout = self.frame_layout(
             &data,
@@ -593,7 +606,9 @@ impl ChartCard {
             },
             bars.len(),
         );
-        let time = self.takes_part_in_sync(source).then(|| view.hover_axis(bars, plot, data.preview));
+        let time = self
+            .takes_part_in_sync(source)
+            .then(|| view.hover_axis(bars, plot, data.preview));
         body::report_hover(&mut pointer, &response, plot, &view, &projection, time);
 
         pointer.clicked = response.clicked();
@@ -665,9 +680,18 @@ mod tests {
 
     #[test]
     fn stock_and_index_symbol_types_are_distinct() {
-        assert_eq!(symbol_info("SAP.DE", DataSource::Yahoo, ChartType::Candles).currency, "EUR");
-        assert_eq!(symbol_info("^IXIC", DataSource::Yahoo, ChartType::Candles).kind, "index");
-        assert_eq!(symbol_info("AAPL", DataSource::Yahoo, ChartType::Candles).kind, "stock");
+        assert_eq!(
+            symbol_info("SAP.DE", DataSource::Yahoo, ChartType::Candles).currency,
+            "EUR"
+        );
+        assert_eq!(
+            symbol_info("^IXIC", DataSource::Yahoo, ChartType::Candles).kind,
+            "index"
+        );
+        assert_eq!(
+            symbol_info("AAPL", DataSource::Yahoo, ChartType::Candles).kind,
+            "stock"
+        );
         assert_eq!(
             symbol_info("AAPL", DataSource::Alpaca, ChartType::Candles).kind,
             "stock"

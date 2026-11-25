@@ -482,7 +482,10 @@ mod tests {
 
     #[test]
     fn a_scope_offers_only_its_own_venues() {
-        assert_eq!(Scope::Stocks.venues(), [DataSource::Alpaca, DataSource::Yahoo]);
+        assert_eq!(
+            Scope::Stocks.venues(),
+            [DataSource::Alpaca, DataSource::Yahoo]
+        );
         assert!(!Scope::Crypto.venues().contains(&DataSource::Alpaca));
         assert_eq!(Scope::All.venues().len(), PROVIDERS.len());
         assert_eq!(Scope::Watchlists.venues().len(), PROVIDERS.len());

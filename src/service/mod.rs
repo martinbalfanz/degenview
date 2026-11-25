@@ -246,9 +246,15 @@ pub(crate) fn fetch_yahoo_chart_observed(
 ) -> Result<(Vec<Kline>, i64), ProviderError> {
     let source = DataSource::Yahoo;
     let extended = extended && source.yahoo_stream_symbol(symbol) && timeframe.is_intraday();
-    let fetch = |limit| market::yahoo::YAHOO.fetch_klines_with_session(symbol, timeframe, limit, extended).map(normalize);
+    let fetch = |limit| {
+        market::yahoo::YAHOO
+            .fetch_klines_with_session(symbol, timeframe, limit, extended)
+            .map(normalize)
+    };
     match cache::policy(source, timeframe) {
-        Some(policy) => cache::fetch_observed(source, symbol, timeframe, limit, policy, extended, fetch),
+        Some(policy) => {
+            cache::fetch_observed(source, symbol, timeframe, limit, policy, extended, fetch)
+        }
         None => {
             let started = crate::clock::now_ms();
             fetch(limit).map(|candles| (candles, started))
@@ -330,9 +336,8 @@ pub(crate) fn fetch_klines_range_with_session(
 ) -> Result<Vec<Kline>, ProviderError> {
     let extended = extended && source.yahoo_stream_symbol(symbol) && timeframe.is_intraday();
     if source == DataSource::Yahoo {
-        market::yahoo::YAHOO.fetch_klines_range_with_session(
-            symbol, timeframe, start_ms, end_ms, max, extended,
-        )
+        market::yahoo::YAHOO
+            .fetch_klines_range_with_session(symbol, timeframe, start_ms, end_ms, max, extended)
     } else {
         for_source(source).fetch_klines_range(symbol, timeframe, start_ms, end_ms, max)
     }

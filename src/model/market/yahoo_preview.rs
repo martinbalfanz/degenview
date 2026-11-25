@@ -32,11 +32,30 @@ impl Preview {
 #[cfg(test)]
 #[test]
 fn yahoo_render_copy_keeps_volume_and_time() {
-    let rest = crate::model::Kline { open_time: 1, close_time: 60_000, open: 100.0, high: 103.0, low: 99.0, close: 102.0, volume: 500.0 };
+    let rest = crate::model::Kline {
+        open_time: 1,
+        close_time: 60_000,
+        open: 100.0,
+        high: 103.0,
+        low: 99.0,
+        close: 102.0,
+        volume: 500.0,
+    };
     let mut copy = rest.clone();
-    Preview { open_time: 1, end_time: 60_001, open: 100.0, high: 105.0, low: 99.0, close: 105.0 }.apply_to(&mut copy);
+    Preview {
+        open_time: 1,
+        end_time: 60_001,
+        open: 100.0,
+        high: 105.0,
+        low: 99.0,
+        close: 105.0,
+    }
+    .apply_to(&mut copy);
     assert_eq!((copy.high, copy.close), (105.0, 105.0));
-    assert_eq!((copy.open_time, copy.close_time, copy.volume), (rest.open_time, rest.close_time, rest.volume));
+    assert_eq!(
+        (copy.open_time, copy.close_time, copy.volume),
+        (rest.open_time, rest.close_time, rest.volume)
+    );
     assert_eq!(rest.close, 102.0);
 }
 
@@ -80,14 +99,20 @@ impl SessionLevels {
             {
                 return None;
             }
-            Some(RegularLevel { price, change: quote.change.filter(|v| v.is_finite()), at_close })
+            Some(RegularLevel {
+                price,
+                change: quote.change.filter(|v| v.is_finite()),
+                at_close,
+            })
         });
         let extended = extended.and_then(|quote| {
             let time = quote.timestamp_ms?;
             let session = session_at(time)?;
-            if quote.freshness != Freshness::Delayed || Some(session) != current
+            if quote.freshness != Freshness::Delayed
+                || Some(session) != current
                 || !matches!(session, Session::Pre | Session::Post)
-                || time > now.saturating_add(60_000) || now.saturating_sub(time) > 30 * 60_000
+                || time > now.saturating_add(60_000)
+                || now.saturating_sub(time) > 30 * 60_000
             {
                 return None;
             }
@@ -97,18 +122,34 @@ impl SessionLevels {
     }
 
     pub(crate) fn prices(self) -> impl Iterator<Item = f64> {
-        self.regular.map(|r| r.price).into_iter().chain(self.extended.map(|(_, p)| p))
+        self.regular
+            .map(|r| r.price)
+            .into_iter()
+            .chain(self.extended.map(|(_, p)| p))
     }
 }
 
 #[cfg(test)]
 #[test]
 fn yahoo_session_price_levels_are_independent_of_candle_timeframe() {
-    use crate::model::watchlist::quote::{Freshness, WatchlistQuote};
     use super::yahoo_session::Session;
-    let at = |day, hour, minute| crate::pine::time::calendar::make(2026, 11, day, hour, minute, 0, 0).unwrap();
-    let regular = WatchlistQuote { last: Some(155.38), change: Some(-2.0), timestamp_ms: Some(at(24, 21, 0)), freshness: Freshness::Delayed, ..Default::default() };
-    let extended = WatchlistQuote { last: Some(145.40), timestamp_ms: Some(at(25, 12, 0)), freshness: Freshness::Delayed, ..Default::default() };
+    use crate::model::watchlist::quote::{Freshness, WatchlistQuote};
+    let at = |day, hour, minute| {
+        crate::pine::time::calendar::make(2026, 11, day, hour, minute, 0, 0).unwrap()
+    };
+    let regular = WatchlistQuote {
+        last: Some(155.38),
+        change: Some(-2.0),
+        timestamp_ms: Some(at(24, 21, 0)),
+        freshness: Freshness::Delayed,
+        ..Default::default()
+    };
+    let extended = WatchlistQuote {
+        last: Some(145.40),
+        timestamp_ms: Some(at(25, 12, 0)),
+        freshness: Freshness::Delayed,
+        ..Default::default()
+    };
     let now = at(25, 12, 1);
     for intraday in [true, false] {
         let levels = SessionLevels::from_quotes(Some(&regular), Some(&extended), now, intraday);
@@ -116,8 +157,21 @@ fn yahoo_session_price_levels_are_independent_of_candle_timeframe() {
         assert!(levels.regular.unwrap().at_close);
         assert_eq!(levels.extended, Some((Session::Pre, 145.40)));
     }
-    assert!(SessionLevels::from_quotes(Some(&regular), Some(&extended), at(25, 13, 0), false).extended.is_none());
-    assert_eq!(SessionLevels::from_quotes(Some(&regular), Some(&extended), at(25, 15, 0), true), SessionLevels::default());
-    let post = WatchlistQuote { timestamp_ms: Some(at(25, 22, 0)), ..extended };
-    assert_eq!(SessionLevels::from_quotes(Some(&regular), Some(&post), at(25, 22, 1), false).extended, Some((Session::Post, 145.40)));
+    assert!(
+        SessionLevels::from_quotes(Some(&regular), Some(&extended), at(25, 13, 0), false)
+            .extended
+            .is_none()
+    );
+    assert_eq!(
+        SessionLevels::from_quotes(Some(&regular), Some(&extended), at(25, 15, 0), true),
+        SessionLevels::default()
+    );
+    let post = WatchlistQuote {
+        timestamp_ms: Some(at(25, 22, 0)),
+        ..extended
+    };
+    assert_eq!(
+        SessionLevels::from_quotes(Some(&regular), Some(&post), at(25, 22, 1), false).extended,
+        Some((Session::Post, 145.40))
+    );
 }

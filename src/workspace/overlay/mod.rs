@@ -97,12 +97,7 @@ impl OverlayBackend for ServiceBackend {
         if instrument.source != DataSource::Yahoo {
             return None;
         }
-        service::cache::peek_yahoo_session(
-            &instrument.symbol,
-            timeframe,
-            CANDLE_LIMIT,
-            extended,
-        )
+        service::cache::peek_yahoo_session(&instrument.symbol, timeframe, CANDLE_LIMIT, extended)
     }
 
     fn klines(
@@ -396,12 +391,7 @@ impl OverlayHub {
 
     /// Drains answers, then starts what is due within the in-flight budget.
     pub(super) fn poll(&mut self, timeframe: Timeframe, ctx: &egui::Context, now: Instant) {
-        self.poll_with_session(
-            timeframe,
-            ctx,
-            now,
-            market::yahoo_session::snapshot(),
-        );
+        self.poll_with_session(timeframe, ctx, now, market::yahoo_session::snapshot());
     }
 
     fn poll_with_session(
@@ -422,16 +412,18 @@ impl OverlayHub {
         }
         let mut changed = false;
         for series in self.series.values_mut() {
-            let mode = policy.effective(series.instrument.source, &series.instrument.symbol, timeframe);
+            let mode = policy.effective(
+                series.instrument.source,
+                &series.instrument.symbol,
+                timeframe,
+            );
             if series.policy != mode {
                 series.reset();
                 series.policy = mode;
                 if series.shown()
-                    && let Some(candles) = self.backend.cached_session(
-                        &series.instrument,
-                        timeframe,
-                        mode.extended,
-                    )
+                    && let Some(candles) =
+                        self.backend
+                            .cached_session(&series.instrument, timeframe, mode.extended)
                 {
                     series.set_candles(candles);
                     series.status = OverlayStatus::Ready;

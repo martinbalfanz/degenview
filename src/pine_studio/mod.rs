@@ -467,7 +467,10 @@ impl PineStudio {
     }
 
     pub(crate) fn sync_yahoo_session(&mut self) -> bool {
-        if !self.preview.sync_session(crate::model::market::yahoo_session::snapshot()) {
+        if !self
+            .preview
+            .sync_session(crate::model::market::yahoo_session::snapshot())
+        {
             return false;
         }
         self.debug.invalidate_session_policy();

@@ -566,7 +566,8 @@ impl ChartWorkspace {
             if chart.prepare_yahoo_session(self.timeframe, policy) {
                 chart.fetch_with_session(self.timeframe, ctx, policy);
                 changed = true;
-            } else if chart.is_market() && chart.source.yahoo_stream_symbol(&chart.symbol)
+            } else if chart.is_market()
+                && chart.source.yahoo_stream_symbol(&chart.symbol)
                 && self.timeframe.is_intraday()
             {
                 chart.receive_fetch(self.timeframe);
@@ -759,7 +760,8 @@ impl ChartWorkspace {
 impl Drop for ChartWorkspace {
     fn drop(&mut self) {
         self.quote_coordinator.release(self.id);
-        self.quote_coordinator.release(chart::live::yahoo_chart_quote_owner(self.id));
+        self.quote_coordinator
+            .release(chart::live::yahoo_chart_quote_owner(self.id));
         self.quote_coordinator.release(editor::quote_owner(self.id));
         self.quote_coordinator
             .release(crate::ui::chart::symbol_picker::quote_owner(self.id));

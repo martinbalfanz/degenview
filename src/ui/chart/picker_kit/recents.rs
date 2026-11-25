@@ -37,8 +37,10 @@ pub fn store_recents(store: &crate::store::Store, recents: &[RecentMarket]) {
 /// Puts `result` first in `recents`, the one place both sheets record a pick. Prediction markets
 /// and CoinMarketCap indices are not kept; returns whether the list changed.
 pub(crate) fn record_recent(recents: &mut Vec<RecentMarket>, result: &SearchResult) -> bool {
-    if result.source.is_prediction_market() || result.source == DataSource::CoinMarketCap
-        || result.source.yahoo_portfolio_excluded(&result.full_symbol) {
+    if result.source.is_prediction_market()
+        || result.source == DataSource::CoinMarketCap
+        || result.source.yahoo_portfolio_excluded(&result.full_symbol)
+    {
         return false;
     }
     recents.retain(|recent| {

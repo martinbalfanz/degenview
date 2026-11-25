@@ -32,10 +32,13 @@ const SECURITY_NESTING_LIMIT: usize = 3;
 fn native_hourly_ticker(ticker: &str, seconds: f64) -> bool {
     seconds == 3_600.0
         && ticker.split_once(':').is_some_and(|(prefix, symbol)| {
-            crate::model::market::venue::source_for_prefix(prefix)
-                .is_some_and(|source| crate::model::market::yahoo_session::native_hourly(
-                    source, symbol, crate::model::Timeframe::HOUR_1,
-                ))
+            crate::model::market::venue::source_for_prefix(prefix).is_some_and(|source| {
+                crate::model::market::yahoo_session::native_hourly(
+                    source,
+                    symbol,
+                    crate::model::Timeframe::HOUR_1,
+                )
+            })
         })
 }
 
@@ -97,7 +100,13 @@ impl ChartBar {
 
     /// The bar `bar` runs as. `history_end` is `Session::history_end`; without it the chart bar
     /// that is the last confirmed history one ends the history.
-    fn of(bar: &Kline, seconds: f64, flags: &BarFlags, history_end: Option<i64>, native_hourly: bool) -> Self {
+    fn of(
+        bar: &Kline,
+        seconds: f64,
+        flags: &BarFlags,
+        history_end: Option<i64>,
+        native_hourly: bool,
+    ) -> Self {
         let end = Self::end_of(bar, seconds, native_hourly);
         Self {
             start: bar.open_time,
@@ -145,7 +154,14 @@ impl ChartBar {
     /// reads it. The one still open at the history's end, and one developing in real time, is not
     /// (TradingView-measured: a completed month reads 1 from every chart bar inside it, the final
     /// incomplete month 0, probes A and B; a developing day on a 4h history reads 1, probe R1).
-    fn flags_of(&self, candle: &Kline, interval: f64, commit: bool, is_first: bool, native_hourly: bool) -> BarFlags {
+    fn flags_of(
+        &self,
+        candle: &Kline,
+        interval: f64,
+        commit: bool,
+        is_first: bool,
+        native_hourly: bool,
+    ) -> BarFlags {
         let candle_end = Self::end_of(candle, interval, native_hourly);
         let holds_last_instant = candle.open_time < self.end && self.end <= candle_end;
         let is_realtime = self.realtime && candle_end > self.start;
@@ -366,7 +382,10 @@ impl Session {
             && let Some(candles) =
                 self.lower_timeframe_candles(values.get("symbol"), seconds, recent_bars)
         {
-            let symbol = values.get("symbol").and_then(RuntimeValue::text_value).unwrap_or_default();
+            let symbol = values
+                .get("symbol")
+                .and_then(RuntimeValue::text_value)
+                .unwrap_or_default();
             return self.serve_intrabars(&candles, symbol, seconds, &expression, site, context);
         }
         // The chart's own timeframe: each chart bar is its own single intrabar.
@@ -475,24 +494,25 @@ impl Session {
                 return Err(error);
             }
         };
-        let foreign = if !is_chart_symbol || needs_provider_grid(&symbol_name, self.bar_seconds, interval) {
-            let key = SecurityKey {
-                symbol: symbol_name.clone(),
-                interval,
-                recent_bars: 0,
-            };
-            match self.series(key) {
-                Some(candles) => Some(candles),
-                None => {
-                    if ignore_symbol {
-                        return Ok(None);
+        let foreign =
+            if !is_chart_symbol || needs_provider_grid(&symbol_name, self.bar_seconds, interval) {
+                let key = SecurityKey {
+                    symbol: symbol_name.clone(),
+                    interval,
+                    recent_bars: 0,
+                };
+                match self.series(key) {
+                    Some(candles) => Some(candles),
+                    None => {
+                        if ignore_symbol {
+                            return Ok(None);
+                        }
+                        return Err(self.unserved_symbol(&symbol_name, range));
                     }
-                    return Err(self.unserved_symbol(&symbol_name, range));
                 }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
         Ok(Some(SecurityRequest {
             symbol: if is_chart_symbol {
                 String::new()
@@ -639,7 +659,12 @@ impl Session {
             return Ok(());
         };
         for candle in candles.iter() {
-            if ChartBar::end_of(candle, request.interval, native_hourly_ticker(&self.symbol.ticker_id, request.interval)) > before {
+            if ChartBar::end_of(
+                candle,
+                request.interval,
+                native_hourly_ticker(&self.symbol.ticker_id, request.interval),
+            ) > before
+            {
                 break;
             }
             site.last_result = self.evaluate_higher_timeframe(
@@ -686,7 +711,13 @@ impl Session {
             &Step {
                 bar: &bar,
                 confirmed: context.flags.is_confirmed,
-                chart: ChartBar::of(&bar, seconds, &context.flags, self.history_end, native_hourly_ticker(&self.symbol.ticker_id, seconds)),
+                chart: ChartBar::of(
+                    &bar,
+                    seconds,
+                    &context.flags,
+                    self.history_end,
+                    native_hourly_ticker(&self.symbol.ticker_id, seconds),
+                ),
                 skipped_after: None,
             },
         )?;
@@ -728,7 +759,12 @@ impl Session {
                 &Step {
                     bar: &bar,
                     confirmed: true,
-                    chart: ChartBar::replayed(&bar, seconds, self.history_end, native_hourly_ticker(&self.symbol.ticker_id, seconds)),
+                    chart: ChartBar::replayed(
+                        &bar,
+                        seconds,
+                        self.history_end,
+                        native_hourly_ticker(&self.symbol.ticker_id, seconds),
+                    ),
                     skipped_after: Some(skipped_after),
                 },
             )?;
@@ -782,7 +818,11 @@ impl Session {
         let replay = skipped_after.is_some();
         let native_same_hour = request.interval == self.bar_seconds
             && native_hourly_ticker(&self.symbol.ticker_id, request.interval);
-        let start = if native_same_hour { bar.open_time } else { time::bucket::start(bar.open_time, request.interval) };
+        let start = if native_same_hour {
+            bar.open_time
+        } else {
+            time::bucket::start(bar.open_time, request.interval)
+        };
         let mut fresh = false;
         if state.bucket != Some(start) {
             // The chart skipped the bucket's last bar, so complete it now.
@@ -803,8 +843,16 @@ impl Session {
             developing.push(accumulated.clone());
         }
         developing.push(bar.clone());
-        let developing = if native_same_hour { bar.clone() } else { fold_one(&developing, request.interval) };
-        let end = if native_same_hour { ChartBar::end_of(bar, request.interval, true) } else { time::bucket::end(start, request.interval) };
+        let developing = if native_same_hour {
+            bar.clone()
+        } else {
+            fold_one(&developing, request.interval)
+        };
+        let end = if native_same_hour {
+            ChartBar::end_of(bar, request.interval, true)
+        } else {
+            time::bucket::end(start, request.interval)
+        };
         // The chart bar closes the bucket when its own end reaches the bucket's: a monthly bar is
         // not `open_time + 30 days` (a 31-day month would never close its quarter or year).
         let closes_bucket = chart.end >= end;
@@ -848,14 +896,29 @@ impl Session {
             self.working.securities.insert(key, state);
             return Ok(result);
         }
-        let chart = ChartBar::of(&bar, self.bar_seconds, &context.flags, self.history_end, native_hourly_ticker(&self.symbol.ticker_id, self.bar_seconds));
+        let chart = ChartBar::of(
+            &bar,
+            self.bar_seconds,
+            &context.flags,
+            self.history_end,
+            native_hourly_ticker(&self.symbol.ticker_id, self.bar_seconds),
+        );
         let mut fresh = false;
         if context.flags.is_confirmed {
             let chart_close = self.bar_end(&bar);
             while state.completed_candles < candles.len() {
                 let candle = &candles[state.completed_candles];
-                let ticker = if request.symbol.is_empty() { &self.symbol.ticker_id } else { &request.symbol };
-                if ChartBar::end_of(candle, request.interval, native_hourly_ticker(ticker, request.interval)) > chart_close {
+                let ticker = if request.symbol.is_empty() {
+                    &self.symbol.ticker_id
+                } else {
+                    &request.symbol
+                };
+                if ChartBar::end_of(
+                    candle,
+                    request.interval,
+                    native_hourly_ticker(ticker, request.interval),
+                ) > chart_close
+                {
                     break;
                 }
                 state.last_result =
@@ -923,7 +986,11 @@ impl Session {
             return Ok(result);
         }
         let end = self.bar_end(&bar);
-        let ticker = if symbol.is_empty() { &self.symbol.ticker_id } else { symbol };
+        let ticker = if symbol.is_empty() {
+            &self.symbol.ticker_id
+        } else {
+            symbol
+        };
         let native_target = native_hourly_ticker(ticker, interval);
         let native_chart = native_hourly_ticker(&self.symbol.ticker_id, self.bar_seconds);
         let require_containment = native_chart || native_target;
@@ -945,11 +1012,19 @@ impl Session {
             gaps_on: false,
             foreign: None,
         };
-        let chart = ChartBar::of(&bar, self.bar_seconds, &context.flags, self.history_end, native_hourly_ticker(&self.symbol.ticker_id, self.bar_seconds));
+        let chart = ChartBar::of(
+            &bar,
+            self.bar_seconds,
+            &context.flags,
+            self.history_end,
+            native_hourly_ticker(&self.symbol.ticker_id, self.bar_seconds),
+        );
         let mut results = Vec::new();
         let mut index = low;
         while index < candles.len() && candles[index].open_time < end {
-            if require_containment && ChartBar::end_of(&candles[index], interval, native_target) > end {
+            if require_containment
+                && ChartBar::end_of(&candles[index], interval, native_target) > end
+            {
                 // Later prices from this candle are not available at the
                 // chart close. Do not expose them or commit their state.
                 break;
@@ -1047,7 +1122,14 @@ impl Session {
             request.interval,
             commit,
             self.working.bar_index == 0,
-            native_hourly_ticker(if request.symbol.is_empty() { &self.symbol.ticker_id } else { &request.symbol }, request.interval),
+            native_hourly_ticker(
+                if request.symbol.is_empty() {
+                    &self.symbol.ticker_id
+                } else {
+                    &request.symbol
+                },
+                request.interval,
+            ),
         );
         let mut security_context = RuntimeContext::new(candle.clone(), flags);
         let requested = LogRequest {
@@ -1318,7 +1400,8 @@ mod tests {
     }
 
     #[test]
-    fn yahoo_native_hourly_security_preserves_actual_ends_and_uses_provider_for_incompatible_grids() {
+    fn yahoo_native_hourly_security_preserves_actual_ends_and_uses_provider_for_incompatible_grids()
+    {
         let mut native = bar(1_800_000, 10.0);
         native.close_time = 5_399_999;
         assert_eq!(ChartBar::end_of(&native, 3600.0, true), 5_400_000);
@@ -1500,12 +1583,21 @@ mod tests {
                 hour(1_800_000, 10.0),
                 hour(5_400_000, 99.0), // Ends after first 2h chart bar.
                 hour(9_000_000, 20.0),
-                Kline { close_time: 14_399_999, ..hour(12_600_000, 30.0) },
+                Kline {
+                    close_time: 14_399_999,
+                    ..hour(12_600_000, 30.0)
+                },
             ],
         );
         let chart = [
-            Kline { close_time: 7_199_999, ..bar(0, 1.0) },
-            Kline { close_time: 14_399_999, ..bar(7_200_000, 2.0) },
+            Kline {
+                close_time: 7_199_999,
+                ..bar(0, 1.0)
+            },
+            Kline {
+                close_time: 14_399_999,
+                ..bar(7_200_000, 2.0)
+            },
         ];
         let program = compiler::compile(
             "//@version=6\nindicator(\"T\")\nplot(array.sum(request.security_lower_tf(\"YAHOO:NVDA\", \"60\", close)))",
@@ -1513,9 +1605,16 @@ mod tests {
             &NoLibraries,
         );
         let mut session = Session::new(
-            program, HashMap::new(), Limits::default(), None,
-            SymbolInfo { ticker_id: "YAHOO:NVDA".into(), ..SymbolInfo::default() },
-            Some(Box::new(provider)), None,
+            program,
+            HashMap::new(),
+            Limits::default(),
+            None,
+            SymbolInfo {
+                ticker_id: "YAHOO:NVDA".into(),
+                ..SymbolInfo::default()
+            },
+            Some(Box::new(provider)),
+            None,
         );
         session.configured_bar_seconds = Some(7200.0);
         assert!(session.load_history(&chart, false, None).is_ok());

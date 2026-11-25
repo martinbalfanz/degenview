@@ -461,7 +461,10 @@ impl Engine {
         let mut streams: HashMap<DataSource, HashMap<String, String>> = HashMap::new();
         for (key, instrument) in wanted {
             if instrument.source.streams_quotes()
-                && (instrument.source != DataSource::Yahoo || instrument.source.yahoo_stream_symbol(&instrument.api_symbol()))
+                && (instrument.source != DataSource::Yahoo
+                    || instrument
+                        .source
+                        .yahoo_stream_symbol(&instrument.api_symbol()))
             {
                 streams
                     .entry(instrument.source)
@@ -625,24 +628,41 @@ impl Engine {
         for (key, request) in &planned.requests {
             if let Some(quote) = outcome.quotes.get(&request.symbol) {
                 if source == DataSource::Yahoo {
-                    if source.yahoo_stream_symbol(&request.symbol) && quote.timestamp_ms.is_some()
-                        && self.yahoo_rest.get(key).is_none_or(|previous| quote.timestamp_ms >= previous.timestamp_ms)
+                    if source.yahoo_stream_symbol(&request.symbol)
+                        && quote.timestamp_ms.is_some()
+                        && self
+                            .yahoo_rest
+                            .get(key)
+                            .is_none_or(|previous| quote.timestamp_ms >= previous.timestamp_ms)
                     {
                         self.yahoo_rest.insert(key.clone(), *quote);
                     }
                     // A slow snapshot must not rewind a more recent stream tick.
                     if let Some(last) = self.known.get(key)
-                        && last.timestamp_ms.is_some_and(|old| quote.timestamp_ms.is_none_or(|new| new < old))
-                        && last.timestamp_ms.is_some_and(|ts| now.saturating_sub(ts) <= 30 * 60_000)
+                        && last
+                            .timestamp_ms
+                            .is_some_and(|old| quote.timestamp_ms.is_none_or(|new| new < old))
+                        && last
+                            .timestamp_ms
+                            .is_some_and(|ts| now.saturating_sub(ts) <= 30 * 60_000)
                     {
                         // Refresh the reference from REST without rewinding the price.
                         if let Some(rest) = self.yahoo_rest.get(key)
                             && let (Some(price), Some(ts)) = (last.last, last.timestamp_ms)
                         {
-                            let mut observation = SourceQuote { price, timestamp_ms: Some(ts), volume_24h: last.volume, volume_kind: last.volume_kind, ..SourceQuote::default() };
+                            let mut observation = SourceQuote {
+                                price,
+                                timestamp_ms: Some(ts),
+                                volume_24h: last.volume,
+                                volume_kind: last.volume_kind,
+                                ..SourceQuote::default()
+                            };
                             yahoo_reference(rest, &mut observation);
                             let confirmed = self.received.get(key).copied().unwrap_or(now);
-                            updates.insert(key.clone(), WatchlistQuote::from_source(source, &observation, confirmed));
+                            updates.insert(
+                                key.clone(),
+                                WatchlistQuote::from_source(source, &observation, confirmed),
+                            );
                         }
                         self.rejected.remove(key);
                         continue;
@@ -703,7 +723,10 @@ impl Engine {
         quote: SourceQuote,
         now: i64,
     ) -> SourceQuote {
-        if source == DataSource::Yahoo || quote.previous_day_price.is_some() || !source.streams_quotes() {
+        if source == DataSource::Yahoo
+            || quote.previous_day_price.is_some()
+            || !source.streams_quotes()
+        {
             return quote;
         }
         let reference = self
@@ -773,19 +796,29 @@ impl Engine {
         self.yahoo_extended.retain(|_, (tick, _)| {
             tick.timestamp_ms.is_some_and(|ts| {
                 yahoo_session::session_at(ts) == yahoo_session::session_at(now)
-                    && matches!(yahoo_session::session_at(ts), Some(Session::Pre | Session::Post))
+                    && matches!(
+                        yahoo_session::session_at(ts),
+                        Some(Session::Pre | Session::Post)
+                    )
                     && now.saturating_sub(ts) <= 30 * 60_000
             })
         });
-        let quotes = self.yahoo_extended.iter().filter_map(|(key, (tick, received))| {
-            if !evaluate_freshness(DataSource::Yahoo, *received, now).is_recent() {
-                return None;
-            }
-            let rest = self.yahoo_rest.get(key)?;
-            let mut tick = *tick;
-            yahoo_reference(rest, &mut tick);
-            Some((key.clone(), WatchlistQuote::from_source(DataSource::Yahoo, &tick, *received)))
-        }).collect();
+        let quotes = self
+            .yahoo_extended
+            .iter()
+            .filter_map(|(key, (tick, received))| {
+                if !evaluate_freshness(DataSource::Yahoo, *received, now).is_recent() {
+                    return None;
+                }
+                let rest = self.yahoo_rest.get(key)?;
+                let mut tick = *tick;
+                yahoo_reference(rest, &mut tick);
+                Some((
+                    key.clone(),
+                    WatchlistQuote::from_source(DataSource::Yahoo, &tick, *received),
+                ))
+            })
+            .collect();
         self.book.replace_extended(quotes);
     }
 
@@ -803,7 +836,9 @@ impl Engine {
                 continue;
             };
             if tick.source == DataSource::Yahoo {
-                let Some(timestamp) = tick.quote.timestamp_ms else { continue };
+                let Some(timestamp) = tick.quote.timestamp_ms else {
+                    continue;
+                };
                 let session = yahoo_session::session_at(timestamp);
                 if session != yahoo_session::session_at(now) || session.is_none() {
                     continue;
@@ -811,12 +846,17 @@ impl Engine {
                 // REST must first establish the market; socket payloads alone
                 // cannot verify all the currency and exchange metadata.
                 let previous = latest.get(key).or_else(|| self.known.get(key));
-                let (Some(previous), Some(rest)) = (previous, self.yahoo_rest.get(key)) else { continue };
+                let (Some(previous), Some(rest)) = (previous, self.yahoo_rest.get(key)) else {
+                    continue;
+                };
                 if matches!(session, Some(Session::Pre | Session::Post)) {
                     if timestamp <= previous.timestamp_ms.unwrap_or(i64::MAX)
                         || timestamp > now.saturating_add(60_000)
                         || now.saturating_sub(timestamp) > 30 * 60_000
-                        || self.yahoo_extended.get(key).is_some_and(|(old, _)| old.timestamp_ms >= Some(timestamp))
+                        || self
+                            .yahoo_extended
+                            .get(key)
+                            .is_some_and(|(old, _)| old.timestamp_ms >= Some(timestamp))
                     {
                         continue;
                     }
@@ -884,7 +924,9 @@ const ALL_SOURCES: [DataSource; 14] = [
 fn yahoo_reference(rest: &SourceQuote, tick: &mut SourceQuote) {
     use crate::model::market::yahoo_session::{Session, session_at};
     tick.previous_day_price = None;
-    let (Some(old), Some(ts)) = (rest.timestamp_ms, tick.timestamp_ms) else { return };
+    let (Some(old), Some(ts)) = (rest.timestamp_ms, tick.timestamp_ms) else {
+        return;
+    };
     // New York date, not UTC (after-hours crosses UTC midnight).
     let day = |ms: i64| {
         let offset = crate::pine::time::zone_offset_secs(Some("America/New_York"), ms);
@@ -925,10 +967,16 @@ fn yahoo_reference(rest: &SourceQuote, tick: &mut SourceQuote) {
     }
 }
 
-fn yahoo_tick(previous: &WatchlistQuote, rest: &SourceQuote, mut tick: SourceQuote, now: i64) -> Option<WatchlistQuote> {
+fn yahoo_tick(
+    previous: &WatchlistQuote,
+    rest: &SourceQuote,
+    mut tick: SourceQuote,
+    now: i64,
+) -> Option<WatchlistQuote> {
     let old = previous.timestamp_ms?;
     let timestamp = tick.timestamp_ms?;
-    if timestamp <= old || timestamp > now.saturating_add(60_000)
+    if timestamp <= old
+        || timestamp > now.saturating_add(60_000)
         || now.saturating_sub(timestamp) > 30 * 60_000
     {
         return None;
@@ -949,17 +997,27 @@ mod yahoo_stream_tests {
         let pre = 1795607849000;
         let close = crate::pine::time::calendar::make(2026, 11, 24, 21, 0, 0, 0).unwrap();
         let rest = SourceQuote {
-            price: 140.0, previous_day_price: Some(130.0),
-            timestamp_ms: Some(close), volume_24h: Some(10_000.0),
+            price: 140.0,
+            previous_day_price: Some(130.0),
+            timestamp_ms: Some(close),
+            volume_24h: Some(10_000.0),
             ..SourceQuote::default()
         };
         engine.update(1, vec![instrument.clone()], true, pre);
         engine.yahoo_rest.insert(key.clone(), rest);
-        engine.publish(&key, WatchlistQuote::from_source(DataSource::Yahoo, &rest, pre));
+        engine.publish(
+            &key,
+            WatchlistQuote::from_source(DataSource::Yahoo, &rest, pre),
+        );
         engine.received.insert(key.clone(), pre);
         let tick = StreamTick {
-            source: DataSource::Yahoo, product_id: "NVDA".into(),
-            quote: SourceQuote { price: 147.5, timestamp_ms: Some(pre), ..SourceQuote::default() },
+            source: DataSource::Yahoo,
+            product_id: "NVDA".into(),
+            quote: SourceQuote {
+                price: 147.5,
+                timestamp_ms: Some(pre),
+                ..SourceQuote::default()
+            },
         };
         engine.receive_ticks(vec![tick.clone()], pre);
         let primary = book.get(&instrument).unwrap();
@@ -974,20 +1032,40 @@ mod yahoo_stream_tests {
         assert_eq!(book.get(&instrument), Some(primary.clone()));
         engine.refresh_yahoo_extended(pre + 120_001);
         assert!(book.get_extended(&instrument).is_none());
-        engine.receive_ticks(vec![StreamTick {
-            source: DataSource::Yahoo, product_id: "NVDA".into(),
-            quote: SourceQuote { price: 147.5, timestamp_ms: Some(pre), ..SourceQuote::default() },
-        }], pre + 120_002);
-        assert!(book.get_extended(&instrument).is_none(), "duplicate cannot refresh an expired observation");
+        engine.receive_ticks(
+            vec![StreamTick {
+                source: DataSource::Yahoo,
+                product_id: "NVDA".into(),
+                quote: SourceQuote {
+                    price: 147.5,
+                    timestamp_ms: Some(pre),
+                    ..SourceQuote::default()
+                },
+            }],
+            pre + 120_002,
+        );
+        assert!(
+            book.get_extended(&instrument).is_none(),
+            "duplicate cannot refresh an expired observation"
+        );
         assert_eq!(book.get(&instrument), Some(primary));
     }
 
     #[test]
     fn sparse_tick_uses_rest_reference_and_never_rewinds() {
         let day = crate::pine::time::calendar::make(2026, 11, 25, 15, 0, 0, 0).unwrap();
-        let rest = SourceQuote { price: 100.0, previous_day_price: Some(90.0), timestamp_ms: Some(day + 1000), ..SourceQuote::default() };
+        let rest = SourceQuote {
+            price: 100.0,
+            previous_day_price: Some(90.0),
+            timestamp_ms: Some(day + 1000),
+            ..SourceQuote::default()
+        };
         let previous = WatchlistQuote::from_source(DataSource::Yahoo, &rest, day + 1000);
-        let tick = SourceQuote { price: 105.0, timestamp_ms: Some(day + 2000), ..SourceQuote::default() };
+        let tick = SourceQuote {
+            price: 105.0,
+            timestamp_ms: Some(day + 2000),
+            ..SourceQuote::default()
+        };
         let quote = yahoo_tick(&previous, &rest, tick, day + 2000).unwrap();
         assert_eq!(quote.last, Some(105.0));
         assert_eq!(quote.change, Some(15.0));
@@ -999,9 +1077,19 @@ mod yahoo_stream_tests {
     fn premarket_uses_prior_regular_close_without_regular_volume() {
         let pre = 1795607849000;
         let close = crate::pine::time::calendar::make(2026, 11, 24, 21, 0, 0, 0).unwrap();
-        let rest = SourceQuote { price: 140.0, previous_day_price: Some(130.0), timestamp_ms: Some(close), volume_24h: Some(10_000.0), ..SourceQuote::default() };
+        let rest = SourceQuote {
+            price: 140.0,
+            previous_day_price: Some(130.0),
+            timestamp_ms: Some(close),
+            volume_24h: Some(10_000.0),
+            ..SourceQuote::default()
+        };
         let previous = WatchlistQuote::from_source(DataSource::Yahoo, &rest, pre);
-        let tick = SourceQuote { price: 147.5, timestamp_ms: Some(pre), ..SourceQuote::default() };
+        let tick = SourceQuote {
+            price: 147.5,
+            timestamp_ms: Some(pre),
+            ..SourceQuote::default()
+        };
         let quote = yahoo_tick(&previous, &rest, tick, pre).unwrap();
         assert_eq!(quote.change, Some(7.5));
         assert_eq!(quote.volume, None);

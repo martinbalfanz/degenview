@@ -471,10 +471,17 @@ pub fn show(
             page_shell(
                 &mut page,
                 section,
-                tr!("Chart stocks, ETFs, indexes, currencies and futures without an API key. Prices may be delayed."),
+                tr!(
+                    "Chart stocks, ETFs, indexes, currencies and futures without an API key. Prices may be delayed."
+                ),
                 |ui| {
                     use crate::model::market::yahoo_session;
-                    section_yahoo(ui, input.yahoo_extended_hours, state.yahoo_status.as_ref(), &mut actions);
+                    section_yahoo(
+                        ui,
+                        input.yahoo_extended_hours,
+                        state.yahoo_status.as_ref(),
+                        &mut actions,
+                    );
                     if yahoo_session::overridden_by_environment() {
                         ui.label(tr!("The startup environment variable overrides the saved session preference."));
                     }
@@ -815,7 +822,9 @@ fn section_yahoo(
             ui,
             Icon::ChartLine,
             tr!("Extended hours"),
-            Some(tr!("Include US stock and ETF premarket and after-hours data on intraday charts. Changes apply without restarting.")),
+            Some(tr!(
+                "Include US stock and ETF premarket and after-hours data on intraday charts. Changes apply without restarting."
+            )),
             |ui| {
                 if card::switch(ui, &mut enabled) {
                     actions.push(SettingsAction::SetYahooExtendedHours(enabled));
@@ -829,7 +838,9 @@ fn section_yahoo(
             } else {
                 tr!("Current session: regular hours")
             },
-            kit::size::BODY, kit::REGULAR, theme::text_secondary(),
+            kit::size::BODY,
+            kit::REGULAR,
+            theme::text_secondary(),
         ));
         if let Some(status) = status {
             status_message(ui, &status.text(), status.is_error);

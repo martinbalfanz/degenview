@@ -1,8 +1,8 @@
 //! Native US equity/ETF hourly candles. Vendor session metadata defines
 //! the exact open and end of each observed bar.
 use super::{Chart, ChartMeta, adapter::collect_sessions};
-use crate::model::{DataSource, Kline};
 use crate::model::market::yahoo_session::Session;
+use crate::model::{DataSource, Kline};
 use crate::service::ProviderError;
 
 use std::collections::HashMap;
@@ -27,35 +27,62 @@ const CURRENT_TTL: Duration = Duration::from_secs(15 * 60);
 pub(super) fn remember_current(meta: &ChartMeta, requested_at: i64) {
     let mut current = Vec::new();
     if let Some(value) = &meta.current_trading_period {
-        for (session, name) in [(Session::Pre, "pre"), (Session::Regular, "regular"), (Session::Post, "post")] {
+        for (session, name) in [
+            (Session::Pre, "pre"),
+            (Session::Regular, "regular"),
+            (Session::Post, "post"),
+        ] {
             let mut ranges = Vec::new();
             if let Some(value) = value.get(name) {
                 collect_sessions(value, &mut ranges);
             }
             ranges.sort_unstable();
             ranges.dedup();
-            current.extend(ranges.into_iter().map(|(start, end)| Period { session, start, end }));
+            current.extend(ranges.into_iter().map(|(start, end)| Period {
+                session,
+                start,
+                end,
+            }));
         }
     }
     let key = meta.symbol.to_ascii_uppercase();
     let mut held = crate::lock::lock(&CURRENT);
-    if held.get(&key).is_some_and(|entry| entry.requested_at > requested_at) {
+    if held
+        .get(&key)
+        .is_some_and(|entry| entry.requested_at > requested_at)
+    {
         return;
     }
     // Retain an empty newer result as well: a slower earlier request must
     // not restore a schedule that the latest response did not confirm.
-    if held.len() >= MAX_CURRENT && !held.contains_key(&key)
-        && let Some(oldest) = held.iter().min_by_key(|(_, entry)| entry.received).map(|(key, _)| key.clone())
+    if held.len() >= MAX_CURRENT
+        && !held.contains_key(&key)
+        && let Some(oldest) = held
+            .iter()
+            .min_by_key(|(_, entry)| entry.received)
+            .map(|(key, _)| key.clone())
     {
         held.remove(&oldest);
     }
-    held.insert(key, CurrentPeriods { requested_at, received: Instant::now(), periods: current });
+    held.insert(
+        key,
+        CurrentPeriods {
+            requested_at,
+            received: Instant::now(),
+            periods: current,
+        },
+    );
 }
 
 /// Exact open and exclusive end for the observed quote. Both the quote and
 /// the current time must be in the same vendor period; no standard-hours
 /// fallback, no stale schedule and no guessing the next exchange session.
-pub(crate) fn current_hour_bucket(symbol: &str, timestamp: i64, now: i64, extended: bool) -> Option<(i64, i64)> {
+pub(crate) fn current_hour_bucket(
+    symbol: &str,
+    timestamp: i64,
+    now: i64,
+    extended: bool,
+) -> Option<(i64, i64)> {
     let held = CURRENT.try_lock().ok()?;
     let entry = held.get(&symbol.to_ascii_uppercase())?;
     if entry.received.elapsed() > CURRENT_TTL {
@@ -64,7 +91,12 @@ pub(crate) fn current_hour_bucket(symbol: &str, timestamp: i64, now: i64, extend
     observed_bucket(&entry.periods, timestamp, now, extended)
 }
 
-fn observed_bucket(periods: &[Period], timestamp: i64, now: i64, extended: bool) -> Option<(i64, i64)> {
+fn observed_bucket(
+    periods: &[Period],
+    timestamp: i64,
+    now: i64,
+    extended: bool,
+) -> Option<(i64, i64)> {
     let period = period_at(periods, timestamp.div_euclid(1_000)).ok()??;
     if period_at(periods, now.div_euclid(1_000)).ok()?? != period
         || (!extended && period.session != Session::Regular)
@@ -87,7 +119,11 @@ struct Period {
 
 fn periods(meta: &ChartMeta, extended: bool) -> Vec<Period> {
     let mut out = Vec::new();
-    for (session, name) in [(Session::Pre, "pre"), (Session::Regular, "regular"), (Session::Post, "post")] {
+    for (session, name) in [
+        (Session::Pre, "pre"),
+        (Session::Regular, "regular"),
+        (Session::Post, "post"),
+    ] {
         if !extended && session != Session::Regular {
             continue;
         }
@@ -99,22 +135,35 @@ fn periods(meta: &ChartMeta, extended: bool) -> Vec<Period> {
                 collect_sessions(history, &mut ranges);
             }
         }
-        if let Some(current) = meta.current_trading_period.as_ref().and_then(|value| value.get(name)) {
+        if let Some(current) = meta
+            .current_trading_period
+            .as_ref()
+            .and_then(|value| value.get(name))
+        {
             collect_sessions(current, &mut ranges);
         }
         ranges.sort_unstable();
         ranges.dedup();
-        out.extend(ranges.into_iter().map(|(start, end)| Period { session, start, end }));
+        out.extend(ranges.into_iter().map(|(start, end)| Period {
+            session,
+            start,
+            end,
+        }));
     }
     out.sort_unstable_by_key(|period| period.start);
     out
 }
 
 fn period_at(periods: &[Period], timestamp: i64) -> Result<Option<Period>, ProviderError> {
-    let mut matches = periods.iter().copied().filter(|period| (period.start..period.end).contains(&timestamp));
+    let mut matches = periods
+        .iter()
+        .copied()
+        .filter(|period| (period.start..period.end).contains(&timestamp));
     let first = matches.next();
     if matches.next().is_some() {
-        return Err(ProviderError::data(format!("Overlapping Yahoo hourly trading periods at {timestamp}")));
+        return Err(ProviderError::data(format!(
+            "Overlapping Yahoo hourly trading periods at {timestamp}"
+        )));
     }
     Ok(first)
 }
@@ -131,8 +180,12 @@ pub(super) fn shape(
     include_forming: bool,
     max: usize,
 ) -> Result<Vec<Kline>, ProviderError> {
-    if !DataSource::Yahoo.yahoo_stream_symbol(&chart.meta.symbol) || chart.meta.equity_price_scale() != Some(1.0) {
-        return Err(ProviderError::data("Native Yahoo hourly history requires verified US equity/ETF metadata"));
+    if !DataSource::Yahoo.yahoo_stream_symbol(&chart.meta.symbol)
+        || chart.meta.equity_price_scale() != Some(1.0)
+    {
+        return Err(ProviderError::data(
+            "Native Yahoo hourly history requires verified US equity/ETF metadata",
+        ));
     }
     let periods = periods(&chart.meta, extended);
     let mut out: Vec<Kline> = Vec::new();
@@ -152,12 +205,18 @@ pub(super) fn shape(
                 // flat, explicitly zero-volume close print may correct the
                 // adjacent final bar. Other boundary rows are ambiguous:
                 // discard them without absorbing OHLC or volume.
-                if !extended && periods.iter().any(|period| {
-                    period.session == Session::Regular && period.end == bar.timestamp
-                }) {
-                    if bar.volume == Some(0.0) && bar.open == bar.close
-                        && bar.high == bar.close && bar.low == bar.close
-                        && let Some(last) = out.last_mut().filter(|last| last.close_time.checked_add(1) == Some(open_time))
+                if !extended
+                    && periods.iter().any(|period| {
+                        period.session == Session::Regular && period.end == bar.timestamp
+                    })
+                {
+                    if bar.volume == Some(0.0)
+                        && bar.open == bar.close
+                        && bar.high == bar.close
+                        && bar.low == bar.close
+                        && let Some(last) = out
+                            .last_mut()
+                            .filter(|last| last.close_time.checked_add(1) == Some(open_time))
                     {
                         last.high = last.high.max(bar.close);
                         last.low = last.low.min(bar.close);
@@ -165,7 +224,10 @@ pub(super) fn shape(
                     }
                     continue;
                 }
-                return Err(ProviderError::data(format!("No Yahoo hourly trading period for {}", bar.timestamp)));
+                return Err(ProviderError::data(format!(
+                    "No Yahoo hourly trading period for {}",
+                    bar.timestamp
+                )));
             }
         };
         if (bar.timestamp - period.start).rem_euclid(HOUR) != 0 {
@@ -176,23 +238,35 @@ pub(super) fn shape(
             // Do not fold its ambiguous OHLCV into authoritative candles.
             let latest_regular = period.session == Session::Regular
                 && chart.meta.regular_market_time == Some(bar.timestamp);
-            let recent_extended_quote = extended && period.session != Session::Regular
+            let recent_extended_quote = extended
+                && period.session != Session::Regular
                 && end_ms.saturating_sub(open_time) <= 30 * 60_000
-                && bar.open == bar.close && bar.high == bar.close && bar.low == bar.close
+                && bar.open == bar.close
+                && bar.high == bar.close
+                && bar.low == bar.close
                 && bar.volume.is_none_or(|volume| volume == 0.0);
-            if include_forming && index + 1 == chart.bars.len()
+            if include_forming
+                && index + 1 == chart.bars.len()
                 && (latest_regular || recent_extended_quote)
             {
                 continue;
             }
             return Err(ProviderError::data(format!(
                 "Unexpected Yahoo hourly anchor at {} (session={:?}, period={}..{}, last_row={}, regularMarketTime={:?}, OHLCV={:?})",
-                bar.timestamp, period.session, period.start, period.end,
-                index + 1 == chart.bars.len(), chart.meta.regular_market_time, bar,
+                bar.timestamp,
+                period.session,
+                period.start,
+                period.end,
+                index + 1 == chart.bars.len(),
+                chart.meta.regular_market_time,
+                bar,
             )));
         }
         let Some(volume) = bar.volume else {
-            return Err(ProviderError::data(format!("Missing native hourly volume field at {}", bar.timestamp)));
+            return Err(ProviderError::data(format!(
+                "Missing native hourly volume field at {}",
+                bar.timestamp
+            )));
         };
         let end = (bar.timestamp + HOUR).min(period.end) * 1_000;
         if !include_forming && end > end_ms {
@@ -221,7 +295,12 @@ mod tests {
     fn fixture() -> Chart {
         let start = 1_800;
         let bar = |timestamp, volume| Bar {
-            timestamp, open: 100.0, high: 105.0, low: 99.0, close: 103.0, volume: Some(volume),
+            timestamp,
+            open: 100.0,
+            high: 105.0,
+            low: 99.0,
+            close: 103.0,
+            volume: Some(volume),
         };
         Chart {
             meta: ChartMeta {
@@ -236,23 +315,48 @@ mod tests {
                 })),
                 ..Default::default()
             },
-            bars: vec![bar(0, 0.0), bar(start, 400.0), bar(5400, 200.0), bar(7200, 0.0)],
+            bars: vec![
+                bar(0, 0.0),
+                bar(start, 400.0),
+                bar(5400, 200.0),
+                bar(7200, 0.0),
+            ],
         }
     }
 
     #[test]
     fn yahoo_native_hourly_observation_uses_current_vendor_period_and_short_end() {
         let at = |h, m| crate::pine::time::calendar::make(2026, 11, 25, h, m, 0, 0).unwrap();
-        let period = Period { session: Session::Regular, start: at(14, 30) / 1_000, end: at(21, 0) / 1_000 };
-        let post = Period { session: Session::Post, start: at(21, 0) / 1_000, end: at(23, 0) / 1_000 };
+        let period = Period {
+            session: Session::Regular,
+            start: at(14, 30) / 1_000,
+            end: at(21, 0) / 1_000,
+        };
+        let post = Period {
+            session: Session::Post,
+            start: at(21, 0) / 1_000,
+            end: at(23, 0) / 1_000,
+        };
         let periods = [period, post];
-        assert_eq!(observed_bucket(&periods, at(20, 45), at(20, 46), false), Some((at(20, 30), at(21, 0))));
-        assert_eq!(observed_bucket(&periods, at(21, 5), at(21, 6), true), Some((at(21, 0), at(22, 0))));
+        assert_eq!(
+            observed_bucket(&periods, at(20, 45), at(20, 46), false),
+            Some((at(20, 30), at(21, 0)))
+        );
+        assert_eq!(
+            observed_bucket(&periods, at(21, 5), at(21, 6), true),
+            Some((at(21, 0), at(22, 0)))
+        );
         assert!(observed_bucket(&periods, at(21, 5), at(21, 6), false).is_none());
         assert!(observed_bucket(&periods, at(20, 59), at(21, 0), true).is_none());
         assert!(observed_bucket(&periods, at(23, 1), at(23, 2), true).is_none());
-        let shortened = [Period { end: at(18, 0) / 1_000, ..period }];
-        assert_eq!(observed_bucket(&shortened, at(17, 45), at(17, 46), false), Some((at(17, 30), at(18, 0))));
+        let shortened = [Period {
+            end: at(18, 0) / 1_000,
+            ..period
+        }];
+        assert_eq!(
+            observed_bucket(&shortened, at(17, 45), at(17, 46), false),
+            Some((at(17, 30), at(18, 0)))
+        );
         assert!(observed_bucket(&shortened, at(18, 5), at(18, 6), true).is_none());
     }
 
@@ -260,13 +364,31 @@ mod tests {
     fn yahoo_native_hourly_shape_preserves_anchors_and_shortens_session_ends() {
         let chart = fixture();
         let bars = shape(&chart, 0, 10_800_000, true, false, 100).unwrap();
-        assert_eq!(bars.iter().map(|bar| (bar.open_time, bar.close_time, bar.volume)).collect::<Vec<_>>(),
-            [(0, 1_799_999, 0.0), (1_800_000, 5_399_999, 400.0), (5_400_000, 7_199_999, 200.0), (7_200_000, 10_799_999, 0.0)]);
-        assert_eq!((bars[1].open, bars[1].high, bars[1].low, bars[1].close), (100.0, 105.0, 99.0, 103.0));
+        assert_eq!(
+            bars.iter()
+                .map(|bar| (bar.open_time, bar.close_time, bar.volume))
+                .collect::<Vec<_>>(),
+            [
+                (0, 1_799_999, 0.0),
+                (1_800_000, 5_399_999, 400.0),
+                (5_400_000, 7_199_999, 200.0),
+                (7_200_000, 10_799_999, 0.0)
+            ]
+        );
+        assert_eq!(
+            (bars[1].open, bars[1].high, bars[1].low, bars[1].close),
+            (100.0, 105.0, 99.0, 103.0)
+        );
         let page = shape(&chart, 1_800_000, 7_200_000, true, false, 1).unwrap();
         assert_eq!(page, bars[2..3]);
-        assert_eq!(shape(&chart, 1_800_000, 6_000_000, true, false, 100).unwrap(), bars[1..2]);
-        assert_eq!(shape(&chart, 1_800_000, 6_000_000, true, true, 100).unwrap(), bars[1..3]);
+        assert_eq!(
+            shape(&chart, 1_800_000, 6_000_000, true, false, 100).unwrap(),
+            bars[1..2]
+        );
+        assert_eq!(
+            shape(&chart, 1_800_000, 6_000_000, true, true, 100).unwrap(),
+            bars[1..3]
+        );
     }
 
     #[test]
@@ -276,20 +398,33 @@ mod tests {
         chart.bars.remove(0);
         let expected = shape(&chart, 0, 6_800_000, false, true, 100).unwrap();
         let observation = Bar {
-            timestamp: 6_744, open: 115.0, high: 116.0, low: 114.0,
-            close: 115.5, volume: Some(500.0),
+            timestamp: 6_744,
+            open: 115.0,
+            high: 116.0,
+            low: 114.0,
+            close: 115.5,
+            volume: Some(500.0),
         };
         chart.meta.regular_market_time = Some(observation.timestamp);
         chart.bars.push(observation.clone());
         // Ignore the latest print entirely: no synthetic OHLC, volume, or
         // new anchor, even when its payload looks like a candle.
-        assert_eq!(shape(&chart, 0, 6_800_000, false, true, 100).unwrap(), expected);
-        assert_eq!(shape(&chart, 0, 6_800_000, true, true, 100).unwrap(), expected);
+        assert_eq!(
+            shape(&chart, 0, 6_800_000, false, true, 100).unwrap(),
+            expected
+        );
+        assert_eq!(
+            shape(&chart, 0, 6_800_000, true, true, 100).unwrap(),
+            expected
+        );
         assert!(shape(&chart, 0, 7_200_000, false, false, 100).is_err());
         chart.meta.regular_market_time = None;
         assert!(shape(&chart, 0, 6_800_000, false, true, 100).is_err());
         chart.meta.regular_market_time = Some(observation.timestamp);
-        chart.bars.push(Bar { timestamp: 7200, ..observation });
+        chart.bars.push(Bar {
+            timestamp: 7200,
+            ..observation
+        });
         assert!(shape(&chart, 0, 8_000_000, true, true, 100).is_err());
     }
 
@@ -297,8 +432,18 @@ mod tests {
     fn yahoo_native_hourly_ignores_recent_flat_extended_quote_but_not_unknown_ohlcv() {
         let mut chart = fixture();
         let expected = shape(&chart, 0, 8_000_000, true, true, 100).unwrap();
-        chart.bars.push(Bar { timestamp: 7900, open: 115.0, high: 115.0, low: 115.0, close: 115.0, volume: None });
-        assert_eq!(shape(&chart, 0, 8_000_000, true, true, 100).unwrap(), expected);
+        chart.bars.push(Bar {
+            timestamp: 7900,
+            open: 115.0,
+            high: 115.0,
+            low: 115.0,
+            close: 115.0,
+            volume: None,
+        });
+        assert_eq!(
+            shape(&chart, 0, 8_000_000, true, true, 100).unwrap(),
+            expected
+        );
         assert!(shape(&chart, 0, 10_000_000, true, true, 100).is_err());
         assert!(shape(&chart, 0, 8_000_000, true, false, 100).is_err());
         chart.bars.last_mut().unwrap().volume = Some(10.0);
@@ -330,11 +475,17 @@ mod tests {
             chart.bars.last_mut().unwrap().volume = volume;
             let regular = shape(&chart, 0, 10_800_000, false, false, 100).unwrap();
             assert_eq!(regular.len(), 2);
-            assert_eq!((regular[1].close_time, regular[1].close, regular[1].volume), (7_199_999, 103.0, 200.0));
+            assert_eq!(
+                (regular[1].close_time, regular[1].close, regular[1].volume),
+                (7_199_999, 103.0, 200.0)
+            );
             if let Some(volume) = volume {
                 let extended = shape(&chart, 0, 10_800_000, true, false, 100).unwrap();
                 assert_eq!(extended.len(), 3);
-                assert_eq!((extended[2].open_time, extended[2].volume), (7_200_000, volume));
+                assert_eq!(
+                    (extended[2].open_time, extended[2].volume),
+                    (7_200_000, volume)
+                );
             }
         }
         // An unknown timestamp elsewhere is still rejected: do not turn a
@@ -357,6 +508,9 @@ mod tests {
         print.close = 104.0;
         let bars = shape(&chart, 0, 10_800_000, false, false, 100).unwrap();
         assert_eq!(bars.len(), 2);
-        assert_eq!((bars[1].close_time, bars[1].close, bars[1].volume), (7_199_999, 104.0, 200.0));
+        assert_eq!(
+            (bars[1].close_time, bars[1].close, bars[1].volume),
+            (7_199_999, 104.0, 200.0)
+        );
     }
 }

@@ -242,6 +242,9 @@ mod tests {
             names(&of("coinbase:btc", Scope::All), Scope::All),
             ["Coinbase"]
         );
-        assert_eq!(names(&of("btc", Scope::Stocks), Scope::Stocks), ["Alpaca", "Yahoo Finance"]);
+        assert_eq!(
+            names(&of("btc", Scope::Stocks), Scope::Stocks),
+            ["Alpaca", "Yahoo Finance"]
+        );
     }
 }

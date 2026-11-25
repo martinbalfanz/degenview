@@ -197,19 +197,42 @@ impl ChartCard {
             let tag = Rect::from_center_size(
                 Pos2::new(x, rect.bottom() - style.time_axis_height() / 2.0),
                 Vec2::new(self.time_tag_width(style), style.time_axis_height() - 6.0),
-            ).intersect(Rect::from_min_max(Pos2::new(plot.left(), plot.bottom()), Pos2::new(plot.right(), rect.bottom())));
+            )
+            .intersect(Rect::from_min_max(
+                Pos2::new(plot.left(), plot.bottom()),
+                Pos2::new(plot.right(), rect.bottom()),
+            ));
             painter.rect_filled(tag, 3.0, Color32::from_gray(79));
-            painter.text(tag.center(), Align2::CENTER_CENTER, self.time_text(preview.open_time), style.time_font(), Color32::WHITE);
+            painter.text(
+                tag.center(),
+                Align2::CENTER_CENTER,
+                self.time_text(preview.open_time),
+                style.time_font(),
+                Color32::WHITE,
+            );
         }
         if main_visible && style.ohlc_readout && caps.readout {
             let format = self.appearance.price_format();
             let values = [
                 (tr!("Provisional").to_owned(), format.format(preview.close)),
-                (tr_c!("readout label: open", "O").to_owned(), format.format(preview.open)),
-                (tr_c!("readout label: high", "H").to_owned(), format.format(preview.high)),
-                (tr_c!("readout label: low", "L").to_owned(), format.format(preview.low)),
+                (
+                    tr_c!("readout label: open", "O").to_owned(),
+                    format.format(preview.open),
+                ),
+                (
+                    tr_c!("readout label: high", "H").to_owned(),
+                    format.format(preview.high),
+                ),
+                (
+                    tr_c!("readout label: low", "L").to_owned(),
+                    format.format(preview.low),
+                ),
             ];
-            let color = if preview.close >= preview.open { self.bullish_color() } else { self.bearish_color() };
+            let color = if preview.close >= preview.open {
+                self.bullish_color()
+            } else {
+                self.bearish_color()
+            };
             paint_ohlc_readout(painter, self.below_header(plot), &values, color);
         }
     }

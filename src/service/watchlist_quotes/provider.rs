@@ -346,7 +346,10 @@ fn dexscreener(requests: &[QuoteRequest]) -> Outcome {
 }
 
 fn yahoo(requests: &[QuoteRequest]) -> Result<HashMap<String, SourceQuote>, QuoteFailure> {
-    let symbols: Vec<&str> = requests.iter().map(|request| request.symbol.as_str()).collect();
+    let symbols: Vec<&str> = requests
+        .iter()
+        .map(|request| request.symbol.as_str())
+        .collect();
     let quotes = crate::service::market::yahoo::quotes(&symbols).map_err(|error| {
         if error.is_rate_limited() {
             QuoteFailure::RateLimited
@@ -357,17 +360,21 @@ fn yahoo(requests: &[QuoteRequest]) -> Result<HashMap<String, SourceQuote>, Quot
     Ok(requests
         .iter()
         .filter_map(|request| {
-            let quote = quotes.iter().find(|quote| {
-                quote.symbol.eq_ignore_ascii_case(&request.symbol)
-            })?;
+            let quote = quotes
+                .iter()
+                .find(|quote| quote.symbol.eq_ignore_ascii_case(&request.symbol))?;
             let equity_scale = quote.equity_price_scale();
             let derivative = quote.derivative();
-            let scale = equity_scale.or_else(|| quote.index_price_scale()).or_else(|| derivative.map(|_| 1.0))?;
+            let scale = equity_scale
+                .or_else(|| quote.index_price_scale())
+                .or_else(|| derivative.map(|_| 1.0))?;
             let volume_kind = if equity_scale.is_some() {
                 Some(VolumeKind::Shares)
             } else if derivative.is_some_and(|market| market.has_volume()) {
                 Some(VolumeKind::Contracts)
-            } else { None };
+            } else {
+                None
+            };
             let volume = volume_kind.and(quote.regular_market_volume);
             Some((
                 request.symbol.clone(),
@@ -376,7 +383,9 @@ fn yahoo(requests: &[QuoteRequest]) -> Result<HashMap<String, SourceQuote>, Quot
                     previous_day_price: quote.previous_close.map(|price| price * scale),
                     volume_24h: volume,
                     volume_kind: volume.and(volume_kind),
-                    timestamp_ms: quote.timestamp.and_then(|seconds| seconds.checked_mul(1_000)),
+                    timestamp_ms: quote
+                        .timestamp
+                        .and_then(|seconds| seconds.checked_mul(1_000)),
                 },
             ))
         })

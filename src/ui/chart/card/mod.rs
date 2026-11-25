@@ -656,11 +656,17 @@ impl ChartCard {
     }
 
     /// View-only price marker; cannot change chart data, scripts or volume.
-    pub fn set_yahoo_preview(&mut self, preview: Option<crate::model::market::yahoo_preview::Preview>) {
+    pub fn set_yahoo_preview(
+        &mut self,
+        preview: Option<crate::model::market::yahoo_preview::Preview>,
+    ) {
         self.yahoo_preview = preview;
     }
 
-    pub(crate) fn set_yahoo_session_levels(&mut self, levels: crate::model::market::yahoo_preview::SessionLevels) {
+    pub(crate) fn set_yahoo_session_levels(
+        &mut self,
+        levels: crate::model::market::yahoo_preview::SessionLevels,
+    ) {
         self.yahoo_session_levels = levels;
     }
 

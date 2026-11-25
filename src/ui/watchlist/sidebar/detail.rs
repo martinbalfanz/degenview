@@ -35,7 +35,11 @@ pub(super) fn detail_height(quote: Option<&WatchlistQuote>, extended: bool) -> f
         + DETAIL_LISTS
         + DETAIL_GAP * 3.0
         + if note { DETAIL_NOTE + DETAIL_GAP } else { 0.0 }
-        + if extended { DETAIL_TILE + DETAIL_GAP } else { 0.0 }
+        + if extended {
+            DETAIL_TILE + DETAIL_GAP
+        } else {
+            0.0
+        }
 }
 
 /// Paints `text` as a capsule centred on `center_y` with its right edge at `right`, and returns
@@ -151,7 +155,10 @@ pub(super) fn detail_panel(
     let extended = (input.extended_quote)(&item.instrument);
     let source = item.instrument.source;
     let (card, _) = ui.allocate_exact_size(
-        Vec2::new(ui.available_width(), detail_height(quote, extended.is_some())),
+        Vec2::new(
+            ui.available_width(),
+            detail_height(quote, extended.is_some()),
+        ),
         Sense::hover(),
     );
     ui.painter().rect_filled(card, 0.0, theme::chrome());
@@ -297,15 +304,52 @@ pub(super) fn detail_panel(
         };
         let rect = Rect::from_min_size(Pos2::new(left, y), Vec2::new(width, DETAIL_TILE));
         ui.painter().rect_filled(rect, 8.0, theme::ink(8));
-        let caption = kit::galley(ui, label, 10.0, kit::MEDIUM, theme::text_secondary(), width - 20.0);
-        ui.painter().galley(Pos2::new(left + 10.0, y + 4.0), caption, theme::text_secondary());
-        let pill = detail_pill(ui, right - 8.0, y + 24.0, &percent, ink, theme::with_alpha(ink, 0.14), None);
-        let value = kit::digits(ui, &price, 14.0, kit::SEMIBOLD, theme::text_primary(), (pill.left() - left - 18.0).max(20.0));
-        ui.painter().galley(Pos2::new(left + 10.0, y + 18.0), value, theme::text_primary());
+        let caption = kit::galley(
+            ui,
+            label,
+            10.0,
+            kit::MEDIUM,
+            theme::text_secondary(),
+            width - 20.0,
+        );
+        ui.painter().galley(
+            Pos2::new(left + 10.0, y + 4.0),
+            caption,
+            theme::text_secondary(),
+        );
+        let pill = detail_pill(
+            ui,
+            right - 8.0,
+            y + 24.0,
+            &percent,
+            ink,
+            theme::with_alpha(ink, 0.14),
+            None,
+        );
+        let value = kit::digits(
+            ui,
+            &price,
+            14.0,
+            kit::SEMIBOLD,
+            theme::text_primary(),
+            (pill.left() - left - 18.0).max(20.0),
+        );
+        ui.painter().galley(
+            Pos2::new(left + 10.0, y + 18.0),
+            value,
+            theme::text_primary(),
+        );
         if let Some(timestamp) = extended.timestamp_ms {
-            let updated = crate::model::paper::format::timestamp(timestamp, crate::service::system::timezone::local_utc_offset_secs(timestamp));
-            ui.interact(rect, Id::new(("watchlist-extended-quote", list.id)), Sense::hover())
-                .on_hover_text(format!("{label}: {price}\n{change} ({percent})\n{updated}"));
+            let updated = crate::model::paper::format::timestamp(
+                timestamp,
+                crate::service::system::timezone::local_utc_offset_secs(timestamp),
+            );
+            ui.interact(
+                rect,
+                Id::new(("watchlist-extended-quote", list.id)),
+                Sense::hover(),
+            )
+            .on_hover_text(format!("{label}: {price}\n{change} ({percent})\n{updated}"));
         }
         y += DETAIL_TILE + DETAIL_GAP;
     }

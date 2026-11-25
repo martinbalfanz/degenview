@@ -6,7 +6,10 @@ use std::sync::Mutex;
 const HOUR: i64 = 3_600_000;
 
 fn session(extended: bool) -> PolicySnapshot {
-    PolicySnapshot { extended, revision: 0 }
+    PolicySnapshot {
+        extended,
+        revision: 0,
+    }
 }
 
 /// A provider that records what it is asked and answers from a table; jobs wait until the test
@@ -750,7 +753,10 @@ fn yahoo_overlay_detects_missed_session_round_trip() {
     fake.run_jobs();
     hub.poll_with_session(Timeframe::HOUR_1, &ctx, now, session(false));
 
-    let policy = PolicySnapshot { extended: false, revision: 2 };
+    let policy = PolicySnapshot {
+        extended: false,
+        revision: 2,
+    };
     hub.poll_with_session(Timeframe::HOUR_1, &ctx, now, policy);
     assert!(hub.feed(&yahoo).unwrap().candles.is_empty());
     assert_eq!(hub.feed(&market("ETHUSDT")).unwrap().candles.len(), 2);
